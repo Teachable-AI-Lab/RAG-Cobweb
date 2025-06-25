@@ -65,3 +65,27 @@ class PCAICAWhitening:
         obj = cls()
         obj.__dict__.update(state)
         return obj
+
+
+def encode_and_whiten_pcaica(sentences, st_model, whitening_model) -> np.ndarray:
+    """
+    Encode sentences with SentenceTransformer and whiten embeddings with PCA whitening model.
+
+    Args:
+        sentences (list of str or np.ndarray): List of sentences or numpy array of embeddings.
+        st_model (SentenceTransformer): An initialized SentenceTransformer model.
+        whitening_model (PCAICAWhiteningModel): An initialized PCAICAWhiteningModel.
+
+    Returns:
+        np.ndarray: Whitened embeddings.
+    """
+    if isinstance(sentences[0], str):
+        # Step 1: Encode sentences to embeddings (numpy array)
+        embeddings = st_model.encode(sentences, convert_to_numpy=True, batch_size=64, show_progress_bar=False)
+    else:
+        embeddings = sentences
+
+    # Step 2: Apply whitening transform
+    whitened_embeddings = whitening_model.transform(embeddings)
+
+    return whitened_embeddings
