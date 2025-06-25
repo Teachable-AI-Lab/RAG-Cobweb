@@ -7,7 +7,7 @@ import numpy as np
 import pickle
 from sklearn.decomposition import PCA, FastICA
 
-class PCAICAWhitening:
+class PCAICAWhiteningModel:
     def __init__(self, pca_dim=256, eps=1e-8, ica_max_iter=5000, ica_tol=1e-3):
         self.pca_dim = pca_dim
         self.eps = eps

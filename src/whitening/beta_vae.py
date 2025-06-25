@@ -214,3 +214,9 @@ if __name__ == "__main__":
         kl_stall_patience=10,
         device=None
     )
+
+def encode_sentences_bvae(sentences, st_model, bvae_model):
+    with torch.no_grad():
+        embeddings = st_model.encode(sentences, convert_to_tensor=True)
+        mu, _ = bvae_model.encode(embeddings)
+    return mu.cpu().numpy()  # These are your whitened representations

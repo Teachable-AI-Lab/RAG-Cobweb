@@ -12,6 +12,8 @@ import heapq
 
 import torch
 from sklearn.metrics.pairwise import cosine_similarity
+from src.utils.constants import COBWEB_GREEDY_MODE
+from src.cobweb.CobwebTorchNode import CobwebTorchNode
 
 class CobwebTorchTree(object):
     """

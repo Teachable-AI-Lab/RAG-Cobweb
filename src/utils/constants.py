@@ -1,0 +1,1 @@
+COBWEB_GREEDY_MODE = False
