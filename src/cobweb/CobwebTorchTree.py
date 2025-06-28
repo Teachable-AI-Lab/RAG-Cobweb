@@ -11,7 +11,6 @@ from collections import defaultdict
 import heapq
 
 import torch
-from sklearn.metrics.pairwise import cosine_similarity
 from src.utils.constants import COBWEB_GREEDY_MODE
 from src.cobweb.CobwebTorchNode import CobwebTorchNode
 
@@ -280,7 +279,74 @@ class CobwebTorchTree(object):
 
         return current
 
-    def _cobweb_categorize(self, instance, label, use_best, greedy, max_nodes):
+    def cobweb_categorize_fast(self, instance, label=None, retrieve_k=1):
+        """
+        A fast version of categorize for cobweb that optimizes the search for
+        the sentence node, optimizing and taking the max of P(C|X).
+
+        logP(C|X) = softmax(logP(X|C)) --> softmax is monotonically increasing
+
+        Notes:
+        - variance = meanSq / count for each node
+
+        TODO:
+        - need to figure out a way to make this procedural! this can be done in
+          the long-term but it's almost as easy as creating and iterating on two
+          matrices, smartly replacing nodes along the list
+          - this is a relatively easy fix EXCEPT for the fact that
+
+        For this quick implementation, we compute the matrix at every call (can
+        be very slow over time) and apply the math formulas to identify the best
+        node.
+        - Potential fixes include only traversing leaf nodes (because those
+          are the only relevant nodes to search, leaves are where the sentences
+          populate) --> I've implemented this version of the function but can
+          extend to all nodes if applicable
+
+        """
+
+        all_nodes = []
+        all_leaves = []
+
+        def dfs_tree(node):
+            # administrative behavior
+            all_nodes.append(node)
+            if len(node.children) == 0:
+                all_leaves.append(node)
+            for child in node.children:
+                dfs_tree(child)
+
+        dfs_tree(self.root)
+
+        C_mean = torch.zeros(len(all_leaves), self.shape[0]) # matrix of means, (N, D)
+        C_var = torch.zeros(len(all_leaves), self.shape[0]) # matrix of variances = matrix of meanSq / counts (N, D)
+
+        for i, node in enumerate(all_leaves):
+            C_mean[i] += node.mean
+            C_var[i] += node.meanSq / node.count
+            if torch.zeros(1024).equal(node.meanSq):
+                if hasattr(node, "sentence_id"):
+                    print("LEAF NODE")
+                    print(node.sentence_id)
+                else:
+                    print("NOT LEAF NODE")
+
+        x = instance # the input embeddings vector
+
+        x = x.unsqueeze(0)  # (1, D)
+        log_probs = -0.5 * (
+            torch.log(2 * torch.pi * C_var).sum(dim=1) +
+            ((x - C_mean) ** 2 / C_var).sum(dim=1)
+        )
+
+        print(log_probs)
+
+        # find max of log_probs and then find corresponding index of node
+        _, topk_indices = torch.topk(log_probs, retrieve_k)
+
+        return [all_leaves[idx] for idx in topk_indices]
+
+    def _cobweb_categorize(self, instance, label, use_best, greedy, max_nodes, retrieve_k=None):
         """
         A cobweb specific version of categorize, not intended to be
         externally called.
@@ -293,6 +359,8 @@ class CobwebTorchTree(object):
 
         best = self.root
         best_score = float('-inf')
+
+        retrieved = []
 
         while len(queue) > 0:
             neg_score, neg_curr_ll, _, curr = heapq.heappop(queue)
@@ -317,6 +385,12 @@ class CobwebTorchTree(object):
             if nodes_visited >= max_nodes:
                 break
 
+            if hasattr(curr, "sentence_id"):
+                heapq.heappush(retrieved, (score, random(), curr))
+
+            if retrieve_k is not None and len(retrieved) == retrieve_k:
+                break # TODO can replace this with a part at the end optionally!
+
             if len(curr.children) > 0:
                 ll_children_unnorm = torch.zeros(len(curr.children))
                 for i, c in enumerate(curr.children):
@@ -331,9 +405,12 @@ class CobwebTorchTree(object):
                     # score = child_ll # p(c|x)
                     heapq.heappush(queue, (-score, -child_ll, random(), c))
 
-        return best if use_best else curr
+        if retrieve_k is None:
+            return best if use_best else curr
 
-    def categorize(self, instance, label=None, use_best=True, greedy=False, max_nodes=float('inf')):
+        return [retrieved[i][-1] for i in range(retrieve_k)]
+
+    def categorize(self, instance, label=None, use_best=True, greedy=False, max_nodes=float('inf'), retrieve_k=None):
         """
         Sort an instance in the categorization tree and return its resulting
         concept.
@@ -352,7 +429,7 @@ class CobwebTorchTree(object):
         .. seealso:: :meth:`CobwebTree.cobweb`
         """
         with torch.no_grad():
-            return self._cobweb_categorize(instance, label, use_best, greedy, max_nodes)
+            return self._cobweb_categorize(instance, label, use_best, greedy, max_nodes, retrieve_k)
 
     def old_categorize(self, instance, label):
         """

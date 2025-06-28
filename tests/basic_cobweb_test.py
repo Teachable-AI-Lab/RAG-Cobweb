@@ -27,7 +27,7 @@ def run_cobweb_prediction_example(cobweb_db, test_query, k=4):
         k (int): The number of results to retrieve.
     """
     print(f"\nRunning Cobweb prediction example for query: '{test_query}'")
-    results = cobweb_db.cobweb_predict(test_query, k=k, verbose=True)
+    results = cobweb_db.cobweb_predict(test_query, k=k)
     print("\nRetrieved sentences:")
     for res in results:
         print(f"- {res}")

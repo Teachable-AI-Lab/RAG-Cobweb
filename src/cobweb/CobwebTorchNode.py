@@ -410,11 +410,11 @@ class CobwebTorchNode(object):
             return 0.0
 
         score = 0.0
-        parent_mean, parent_var, parent_p_label = self.mean_var_plabel()
+        parent_mean, parent_var, parent_p_label = mean_var_plabel()
 
         for child in self.children:
             p_of_child = child.count / self.count
-            child_mean, child_var, child_p_label = child.mean_var_plabel()
+            child_mean, child_var, child_p_label = mean_var_plabel()
             score += p_of_child * self.tree.compute_score(child_mean,
                                                           child_var,
                                                           child_p_label,
@@ -491,7 +491,7 @@ class CobwebTorchNode(object):
             "split"] to entertain.
         :type possible_ops: ["best", "new", "merge", "split"]
         :return: A tuple of the category utility of the best operation and the
-            name for the best operation.
+            name of the best operation.
         :rtype: (cu_bestOp, name_bestOp)
         """
         if not best1:
@@ -662,7 +662,7 @@ class CobwebTorchNode(object):
 
         # score for new
         p_of_child = 1.0 / (self.count + 1)
-        child_mean, child_var, child_p_label = self.mean_var_plabel_new(instance, label)
+        child_mean, child_var, child_p_label = c.mean_var_plabel_new(instance, label)
         score += p_of_child * self.tree.compute_score(child_mean, child_var,
                                                       child_p_label,
                                                       parent_mean, parent_var,
@@ -1040,6 +1040,6 @@ class CobwebTorchNode(object):
         else:
             label = None
             if self.total_label_count > 0:
-                p_labels = self.label_counts / self.label_counts.sum()
+                p_labels = label_counts / label_counts.sum()
                 label = self.tree.reverse_labels[torch.multinomial(p_labels, 1).item()]
             return torch.normal(self.mean, self.std), label

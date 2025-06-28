@@ -8,63 +8,92 @@ import pickle
 from sklearn.decomposition import PCA, FastICA
 
 class PCAICAWhiteningModel:
-    def __init__(self, pca_dim=256, eps=1e-8, ica_max_iter=5000, ica_tol=1e-3):
-        self.pca_dim = pca_dim
+    def __init__(self, mean: np.ndarray, pca_components: np.ndarray, ica_unmixing: np.ndarray,
+                 pca_explained_var: np.ndarray, eps: float = 1e-8):
+        self.mean = mean
+        self.pca_components = pca_components
+        self.pca_explained_var = pca_explained_var
+        self.ica_unmixing = ica_unmixing
         self.eps = eps
-        self.ica_max_iter = ica_max_iter
-        self.ica_tol = ica_tol
 
-        # Trained components
-        self.mean = None
-        self.pca_components = None
-        self.pca_var = None
-        self.ica_unmixing = None
+    def __repr__(self):
+        return (
+            f"{self.__class__.__name__}(\n"
+            f"  mean.shape={self.mean.shape},\n"
+            f"  pca_components.shape={self.pca_components.shape},\n"
+            f"  pca_explained_var.shape={self.pca_explained_var.shape},\n"
+            f"  ica_unmixing.shape={self.ica_unmixing.shape},\n"
+            f"  eps={self.eps}\n"
+            f")"
+        )
 
-    def fit(self, X):
-        X = np.asarray(X)
-        self.mean = X.mean(axis=0)
-        X_centered = X - self.mean
+    def transform(self, x: np.ndarray) -> np.ndarray:
+        """
+        Apply PCA + ICA whitening to a single embedding or a batch.
+        """
+        is_single = (x.ndim == 1)
+        if is_single:
+            x = x[np.newaxis, :]
 
-        # PCA
-        pca = PCA(n_components=self.pca_dim)
-        X_pca = pca.fit_transform(X_centered)
-        self.pca_components = pca.components_
-        self.pca_var = pca.explained_variance_
+        # Step 1: Center
+        x_centered = x - self.mean
 
-        # Normalize PCA output
-        X_pca_norm = X_pca / np.sqrt(self.pca_var + self.eps)
+        # Step 2: PCA projection
+        x_pca = np.dot(x_centered, self.pca_components.T)
+        x_pca /= np.sqrt(self.pca_explained_var + self.eps)
 
-        # ICA
-        ica = FastICA(n_components=self.pca_dim, whiten='unit-variance',
-                      max_iter=self.ica_max_iter, tol=self.ica_tol, random_state=42)
-        X_ica = ica.fit_transform(X_pca_norm)
-        self.ica_unmixing = ica.components_
-        return self
+        # Step 3: ICA transform
+        x_ica = np.dot(x_pca, self.ica_unmixing.T)
 
-    def transform(self, X):
-        if self.mean is None:
-            raise ValueError("Model not fitted yet.")
-
-        X = np.atleast_2d(X)
-        X_centered = X - self.mean
-        X_pca = (X_centered @ self.pca_components.T) / np.sqrt(self.pca_var + self.eps)
-        X_ica = X_pca @ self.ica_unmixing.T
-        return X_ica[0] if X.shape[0] == 1 else X_ica
-
-    def fit_transform(self, X):
-        return self.fit(X).transform(X)
-
-    def save(self, path):
-        with open(path, 'wb') as f:
-            pickle.dump(self.__dict__, f)
+        return x_ica[0] if is_single else x_ica
 
     @classmethod
-    def load(cls, path):
-        with open(path, 'rb') as f:
-            state = pickle.load(f)
-        obj = cls()
-        obj.__dict__.update(state)
-        return obj
+    def fit(cls, X: np.ndarray, pca_dim: int = 256, eps: float = 1e-8,
+            ica_max_iter: int = 5000, ica_tol: float = 1e-3):
+        """
+        Fit PCA → ICA whitening on embedding matrix X.
+        """
+        mean = X.mean(axis=0)
+        X_centered = X - mean
+
+        # Step 1: PCA
+        pca = PCA(n_components=pca_dim)
+        X_pca = pca.fit_transform(X_centered)
+        components = pca.components_
+        explained_var = pca.explained_variance_
+
+        # Step 2: Normalize PCA output
+        X_pca_normalized = X_pca / np.sqrt(explained_var + eps)
+
+        # Step 3: ICA
+        ica = FastICA(n_components=components.shape[0], whiten='unit-variance',
+                      max_iter=ica_max_iter, tol=ica_tol)
+        X_ica = ica.fit_transform(X_pca_normalized)
+
+        return cls(mean, components, ica.components_, explained_var, eps)
+
+    def save(self, filepath: str):
+        with open(filepath, 'wb') as f:
+            pickle.dump({
+                'mean': self.mean,
+                'pca_components': self.pca_components,
+                'pca_explained_var': self.pca_explained_var,
+                'ica_unmixing': self.ica_unmixing,
+                'eps': self.eps
+            }, f)
+
+    @classmethod
+    def load(cls, filepath: str):
+        with open(filepath, 'rb') as f:
+            data = pickle.load(f)
+        return cls(
+            mean=data['mean'],
+            pca_components=data['pca_components'],
+            pca_explained_var=data['pca_explained_var'],
+            ica_unmixing=data['ica_unmixing'],
+            eps=data['eps']
+        )
+
 
 
 def encode_and_whiten_pcaica(sentences, st_model, whitening_model) -> np.ndarray:
