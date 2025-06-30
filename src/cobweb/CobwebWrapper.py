@@ -1,19 +1,14 @@
 import torch
+import json
 from src.cobweb.CobwebTorchTree import CobwebTorchTree
 from tqdm import tqdm
 
 class CobwebWrapper:
-    def __init__(self, corpus=None, corpus_embeddings=None, encode_func=None):
+    def __init__(self, corpus=None, corpus_embeddings=None, encode_func=lambda x: x):
         """
-        Initializes the CobwebDatabase with an optional corpus.
+        Initializes the CobwebWrapper with optional sentences and/or embeddings.
+        """
 
-        Args:
-            corpus (list of str): The list of initial sentences.
-            similarity_type (str): The distance metric to use ('cosine', 'euclidean', etc.).
-            encode_func (callable): A function that takes a list of sentences and returns their embeddings.
-        """
-        if encode_func is None:
-             raise ValueError("encode_func must be provided during initialization.")
         self.encode_func = encode_func
 
         self.sentences = []
@@ -21,80 +16,169 @@ class CobwebWrapper:
         self.sentence_to_node = {}
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.max_init_search = 100000
 
-        self.max_init_search = 100000 # Can set this to a really high number because now the CobwebTorchTree has a retrieve_k argument!
-
-        # Determine shape from first embedding or assume a default if corpus is empty
-        if corpus_embeddings is not None and len(corpus_embeddings) > 0:
+        # Determine embedding shape
+        if corpus_embeddings is not None:
+            corpus_embeddings = torch.tensor(corpus_embeddings) if isinstance(corpus_embeddings, list) else corpus_embeddings
             embedding_shape = corpus_embeddings.shape[1:]
-        elif corpus is not None and len(corpus) > 0:
-            # Encode a sample to determine shape if corpus is provided but not embeddings
-            sample_embedding = self.encode_func([corpus[0]])
-            embedding_shape = sample_embedding.shape[1:]
-        else:
-            # Default shape if no initial data is provided - might need adjustment
-            embedding_shape = (768,) # A common embedding dimension, adjust if needed
+        elif corpus and len(corpus) > 0:
+            sample_emb = self.encode_func([corpus[0]])
+            embedding_shape = sample_emb.shape[1:]
 
 
-        self.tree = CobwebTorchTree(shape=embedding_shape, prior_var=1e2, device=self.device)
+        self.tree = CobwebTorchTree(shape=embedding_shape, device=self.device)
 
-        if corpus:
+        if corpus_embeddings is not None:
+            if corpus is None:
+                corpus = [None] * len(corpus_embeddings)
             self.add_sentences(corpus, corpus_embeddings)
-
+        elif corpus is not None and len(corpus) > 0:
+            self.add_sentences(corpus)
 
     def add_sentences(self, new_sentences, new_vectors=None):
         """
-        Adds new sentences to the database and updates the Cobweb tree.
+        Adds new sentences and/or embeddings to the Cobweb tree.
+        If a sentence is None, it is treated as an embedding-only entry.
         """
         if new_vectors is None:
             new_embeddings = self.encode_func(new_sentences)
         else:
-            if self.tree.shape[0] != new_vectors.shape[1]:
-                # If provided vectors have different shape, encode sentences instead
-                print(f"Warning: Provided vector shape {new_vectors.shape[1]} does not match tree shape {self.tree.shape[0]}. Encoding sentences instead.")
+            new_embeddings = new_vectors
+            if isinstance(new_embeddings, list):
+                new_embeddings = torch.tensor(new_embeddings)
+            if new_embeddings.shape[1] != self.tree.shape[0]:
+                print(f"[Warning] Provided vector dim {new_embeddings.shape[1]} != tree dim {self.tree.shape[0]}, re-encoding...")
                 new_embeddings = self.encode_func(new_sentences)
-            else:
-                new_embeddings = new_vectors
 
         start_index = len(self.sentences)
 
-        for i, (sentence, emb) in tqdm(enumerate(zip(new_sentences, new_embeddings)), total=len(new_sentences), desc="Training CobwebAsADatabase"):
-            self.sentences.append(sentence)
+        for i, (sent, emb) in tqdm(enumerate(zip(new_sentences, new_embeddings)),
+                                   total=len(new_sentences),
+                                   desc="Training CobwebTree"):
+            self.sentences.append(sent)
             self.embeddings.append(emb)
             leaf = self.tree.ifit(torch.tensor(emb, device=self.device))
             leaf.sentence_id = start_index + i
             self.sentence_to_node[start_index + i] = leaf
 
+    def cobweb_predict(self, input, k=5, return_ids=False, is_embedding=False):
+        """
+        Predict top-k similar entries from the tree.
+        
+        Args:
+            input (str or tensor): Sentence or embedding vector
+            k (int): Number of similar items to return
+            return_ids (bool): If True, return sentence IDs. Else, return sentences.
+            is_embedding (bool): Set True if `input` is already an embedding vector.
+        """
+        if is_embedding:
+            emb = input
+        else:
+            emb = self.encode_func([input])[0]
 
-    def cobweb_predict(self, input_sentence, k, sort_by_date=False):
-        """
-        Predict similar sentences using Cobweb categorization hierarchy rather
-        than BFS after finding an initial node to leapfrog from.
-        """
-        emb = self.encode_func([input_sentence])
-        input_vec = emb[0].reshape(1, -1)
-        tensor = torch.tensor(emb[0], device=self.device)
+        tensor = torch.tensor(emb, device=self.device)
         leaves = self.tree.categorize(tensor, use_best=True, max_nodes=self.max_init_search, retrieve_k=k)
 
-        if sort_by_date:
-            # Assuming leaves is a list of nodes
-            return [self.sentences[leaf.sentence_id] for leaf in sorted(leaves, key=lambda x: x.timestamp)]
-
-        return [self.sentences[leaf.sentence_id] for leaf in leaves]
+        results = []
+        for leaf in leaves:
+            sid = getattr(leaf, 'sentence_id', None)
+            if sid is None or sid >= len(self.sentences):
+                continue
+            results.append(sid if return_ids else self.sentences[sid])
+        return results
 
     def print_tree(self):
         """
-        Prints the structure of the Cobweb tree.
+        Recursively prints the tree structure.
         """
         def _print_node(node, depth=0):
             indent = "  " * depth
             label = f"Sentence ID: {getattr(node, 'sentence_id', 'N/A')}"
             print(f"{indent}- Node ID {node.id} {label}")
-            if hasattr(node, "sentence_id") and node.sentence_id is not None and node.sentence_id < len(self.sentences):
-                idx = node.sentence_id
-                print(f"{indent}    \"{self.sentences[idx]}\"")
+            sid = getattr(node, "sentence_id", None)
+            if sid is not None and sid < len(self.sentences):
+                sentence = self.sentences[sid]
+                if sentence is not None:
+                    print(f"{indent}    \"{sentence}\"")
+                else:
+                    print(f"{indent}    [Embedding only]")
             for child in getattr(node, "children", []):
                 _print_node(child, depth + 1)
 
-        print("\nSentence clustering tree:")
+        print("\nCobweb Sentence Clustering Tree:")
         _print_node(self.tree.root)
+
+    def dump_json(self, save_path=None):
+        """
+        Serializes the CobwebWrapper into a JSON string.
+        Only serializes essential data: tree, sentences, and sentence-to-node mapping.
+        """
+        wrapper_state = {
+            "tree": json.loads(self.tree.dump_json()),
+            "sentences": self.sentences,
+            "sentence_to_node": {str(k): v.id for k, v in self.sentence_to_node.items()},
+            "device": self.device,
+            "max_init_search": self.max_init_search,
+            "embedding_dim": self.tree.shape[0] if hasattr(self.tree, 'shape') else None
+        }
+        if save_path:
+            with open(save_path, 'w') as f:
+                json.dump(wrapper_state, f, indent=2)
+        return json.dumps(wrapper_state, indent=2)
+
+
+    @staticmethod
+    def load_json(json_data, encode_func=lambda x: x):
+        """
+        Loads a CobwebWrapper from a JSON string or dict.
+
+        Args:
+            json_data (str or dict): The saved wrapper state.
+            encode_func (callable): The encoding function to be used.
+
+        Returns:
+            CobwebWrapper instance.
+        """
+        if isinstance(json_data, str):
+            data = json.loads(json_data)
+        else:
+            data = json_data
+
+        # Load tree
+        tree = CobwebTorchTree.load_json(data["tree"])
+
+        # Initialize wrapper with minimal setup
+        wrapper = CobwebWrapper(corpus=[], encode_func=encode_func)
+        wrapper.tree = tree
+
+        # Restore attributes
+        wrapper.sentences = data.get("sentences", [])
+        wrapper.device = data.get("device", "cuda" if torch.cuda.is_available() else "cpu")
+        wrapper.max_init_search = data.get("max_init_search", 100000)
+
+        # Reconstruct sentence_to_node mapping
+        wrapper.sentence_to_node = {}
+        id_to_node = {}
+
+        def _index_nodes(node):
+            id_to_node[node.id] = node
+            for child in getattr(node, "children", []):
+                _index_nodes(child)
+
+        _index_nodes(wrapper.tree.root)
+
+        for sid_str, node_id in data.get("sentence_to_node", {}).items():
+            sid = int(sid_str)
+            wrapper.sentence_to_node[sid] = id_to_node.get(node_id, None)
+
+        # Optional: embeddings can be lazily reconstructed if needed later
+        wrapper.embeddings = [None] * len(wrapper.sentences)
+
+        return wrapper
+
+    def __len__(self):
+        """
+        Returns the number of sentences in the Cobweb tree.
+        """
+        return len(self.sentences)

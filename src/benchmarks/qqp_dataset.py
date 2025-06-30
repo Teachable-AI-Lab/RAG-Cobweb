@@ -1,176 +1,305 @@
+import os
+import numpy as np
+import time
+import json
+import hashlib
+from tqdm import tqdm
+from random import sample as randsample, shuffle
+from tabulate import tabulate
+
 from sentence_transformers import SentenceTransformer
 from datasets import load_dataset
 from sklearn.metrics import ndcg_score
-from tqdm import tqdm
-import numpy as np
+
 import faiss
-import time
-from random import sample as randsample
 from annoy import AnnoyIndex
 import hnswlib
-# from your_module import CobwebAsADatabase, encode_and_whiten_pcaica # Assuming these are in your module
 from functools import partial
 
-# Load QQP dataset and extract duplicates
-# dataset = load_dataset("quora", split="train", trust_remote_code=True)
-# duplicates = [ex for ex in dataset if ex["is_duplicate"] == 1]
+import pandas as pd
 
-# def run_qqp_benchmark(st_model, whitening_model=None, subset_size=800, target_size=200, top_k=3):
-#     """
-#     Runs the QQP benchmark comparing different retrieval methods.
-
-#     Args:
-#         st_model (SentenceTransformer): The SentenceTransformer model to use.
-#         whitening_model (PCAICAWhiteningModel, optional): The whitening model to use for whiteCAAD.
-#         subset_size (int): The size of the sampled dataset.
-#         target_size (int): The number of queries to use.
-#         top_k (int): The number of results to retrieve.
-#     """
-#     print(f"\n--- Running QQP Benchmark (TOP_K={top_k}) ---")
-
-#     dataset = load_dataset("quora", split="train", trust_remote_code=True)
-#     duplicates = [ex for ex in dataset if ex["is_duplicate"] == 1]
-#     shuffle(duplicates)
-
-#     sampled = randsample(duplicates, subset_size)
-#     queries = [ex["questions"]["text"][0] for ex in sampled[:target_size]]
-#     targets = [ex["questions"]["text"][1] for ex in sampled[:target_size]]
-#     corpus = [ex["questions"]["text"][1] for ex in sampled]
-
-#     print("Length of Corpus:", len(corpus))
-
-#     # Encode corpus
-#     print("Encoding corpus embeddings...")
-#     start_time = time.time()
-#     corpus_embeddings = st_model.encode(corpus, convert_to_numpy=True, normalize_embeddings=True)
-#     encoding_time = time.time() - start_time
-#     print(f"Corpus embedding time: {round(encoding_time, 2)} seconds")
-
-#     # === FAISS Setup ===
-#     dim = corpus_embeddings.shape[1]
-#     faiss_index = faiss.IndexFlatIP(dim)
-#     start_time = time.time()
-#     faiss_index.add(corpus_embeddings)
-#     faiss_build_time = time.time() - start_time
-#     print(f"FAISS index build time: {round(faiss_build_time, 2)} seconds")
-
-#     def retrieve_faiss(query, k):
-#         query_emb = st_model.encode(query, convert_to_numpy=True, normalize_embeddings=True)
-#         _, ids = faiss_index.search(np.expand_dims(query_emb, axis=0), k)
-#         return [corpus[i] for i in ids[0]]
-
-#     # === Annoy Setup ===
-#     annoy_index = AnnoyIndex(dim, 'angular')
-#     for i, emb in enumerate(corpus_embeddings):
-#         annoy_index.add_item(i, emb)
-#     start_time = time.time()
-#     annoy_index.build(10)
-#     annoy_build_time = time.time() - start_time
-#     print(f"Annoy index build time: {round(annoy_build_time, 2)} seconds")
-
-#     def retrieve_annoy(query, k):
-#         query_emb = st_model.encode(query, convert_to_numpy=True, normalize_embeddings=True)
-#         ids = annoy_index.get_nns_by_vector(query_emb, k)
-#         return [corpus[i] for i in ids]
-
-#     # === HNSWLIB Setup ===
-#     hnsw_index = hnswlib.Index(space='cosine', dim=dim)
-#     hnsw_index.init_index(max_elements=len(corpus), ef_construction=100, M=16)
-#     start_time = time.time()
-#     hnsw_index.add_items(corpus_embeddings, np.arange(len(corpus)))
-#     hnsw_index.set_ef(50)
-#     hnsw_build_time = time.time() - start_time
-#     print(f"HNSWLIB index build time: {round(hnsw_build_time, 2)} seconds")
-
-#     def retrieve_hnsw(query, k):
-#         query_emb = st_model.encode(query, convert_to_numpy=True, normalize_embeddings=True)
-#         ids, _ = hnsw_index.knn_query(query_emb, k=k)
-#         return [corpus[i] for i in ids[0]]
-
-#     # === CAAD Setup (Assumes these classes exist in your env) ===
-#     encode_func = partial(st_model.encode, convert_to_numpy=True)
-#     start_time = time.time()
-#     regCAAD = CobwebAsADatabase(corpus, corpus_embeddings=corpus_embeddings, similarity_type="manhattan", encode_func=encode_func, verbose=False)
-#     caad_build_time = time.time() - start_time
-#     print(f"CAAD build time: {round(caad_build_time, 2)} seconds")
-
-#     def retrieve_caad(query, k):
-#         return regCAAD.cobweb_predict(query, k=k, verbose=False)
-
-#     # === whiteCAAD Setup ===
-#     if whitening_model:
-#         white_encode_func = partial(encode_and_whiten_pcaica, st_model=st_model, whitening_model=whitening_model)
-#         start_time = time.time()
-#         whiteCAAD = CobwebAsADatabase(corpus, corpus_embeddings=whitening_model.transform(corpus_embeddings), similarity_type="manhattan", encode_func=white_encode_func, verbose=False)
-#         whitecaad_build_time = time.time() - start_time
-#         print(f"whiteCAAD build time: {round(whitecaad_build_time, 2)} seconds")
-
-#         def retrieve_whitecaad(query, k):
-#             return whiteCAAD.cobweb_predict(query, k=k, verbose=False)
-#     else:
-#         whitecaad_build_time = None
-#         retrieve_whitecaad = None
+from src.cobweb.CobwebWrapper import CobwebWrapper
+from src.whitening.pca_ica import PCAICAWhiteningModel as PCAICAWhitening
 
 
-#     # === Evaluation Function ===
-#     def evaluate(retrieve_fn, name):
-#         if retrieve_fn is None:
-#             return {"method": name, f"recall@{top_k}": "N/A", f"mrr@{top_k}": "N/A", f"ndcg@{top_k}": "N/A", "avg_latency_ms": "N/A"}
+def get_embedding_path(model_name: str, dataset: str, split: str):
+    os.makedirs("data/embeddings", exist_ok=True)
+    model_name = model_name.replace('/', '-')
+    return f"data/embeddings/{model_name}_{dataset}_{split}.npy"
 
-#         hits, mrr_total, ndcg_total = 0, 0, 0
-#         latencies = []
+def load_or_compute_embeddings(texts, model_name, dataset, split, compute = False):
+    path = get_embedding_path(model_name, dataset, split)
+    if os.path.exists(path) and not compute:
+        print(f"Loading embeddings from {path}")
+        return np.load(path)
+    else:
+        print(f"Computing embeddings and saving to {path}")
+        model = SentenceTransformer(model_name, trust_remote_code=True)
+        embeddings = model.encode(texts, convert_to_numpy=True, normalize_embeddings=True)
+        np.save(path, embeddings)
+        return embeddings
 
-#         for query, target in tqdm(zip(queries, targets), total=len(queries), desc=name):
-#             start = time.time()
-#             retrieved = retrieve_fn(query, top_k)
-#             latencies.append(time.time() - start)
-
-#             if target in retrieved:
-#                 hits += 1
-#                 rank = retrieved.index(target) + 1
-#                 mrr_total += 1 / rank
-
-#             relevance = [1 if doc == target else 0 for doc in retrieved]
-#             # Ensure relevance has at least one relevant item for NDCG calculation if possible
-#             if sum(relevance) > 0:
-#                  # Use ideal ranking for NDCG, higher scores first
-#                 ideal_relevance = sorted(relevance, reverse=True)
-#                 # Provide a simple ranking based on position for the actual relevance
-#                 actual_ranking = list(range(len(relevance), 0, -1))
-#                 ndcg_total += ndcg_score([ideal_relevance], [actual_ranking])
+def load_saved_sentences(targets, model_name, dataset, split, compute = False):
+    path = f"data/sentences/{model_name}_{dataset}_{split}.json"
+    if targets is None:
+        print(f"Loading sentences from {path}")
+        with open(path, 'r') as f:
+            return f.readlines()
+    else:
+        print(f"Saving sentences to {path}")
+        with open(path, 'w+') as f:
+            f.write('\n'.join(targets))
+        return targets
 
 
-#         n = len(queries)
-#         return {
-#             "method": name,
-#             f"recall@{top_k}": round(hits / n, 4),
-#             f"mrr@{top_k}": round(mrr_total / n, 4),
-#             f"ndcg@{top_k}": round(ndcg_total / n, 4),
-#             "avg_latency_ms": round(1000 * np.mean(latencies), 2) if latencies else "N/A"
-#         }
+def load_cobweb_model(model_name, corpus, corpus_embs, split, mode):
+    cobweb_path = f"models/cobweb_wrappers/{model_name}_{split}_{mode}.json"
+    if os.path.exists(cobweb_path):
+        print(f"Loading Cobweb model from {cobweb_path}")
+        with open(cobweb_path, 'r') as f:
+            cobweb_json = json.load(f)
+        return CobwebWrapper.load_json(cobweb_json, encode_func=lambda x: x)
+    else:
+        print(f"Computing Cobweb model and saving to {cobweb_path}")
+        cobweb = CobwebWrapper(corpus=corpus, corpus_embeddings=corpus_embs, encode_func=lambda x: x)
+        cobweb.dump_json(cobweb_path)
+        return cobweb
 
-#     # === Run All Evaluations ===
-#     faiss_results = evaluate(retrieve_faiss, "FAISS")
-#     annoy_results = evaluate(retrieve_annoy, "Annoy")
-#     hnsw_results = evaluate(retrieve_hnsw, "HNSWLIB")
-#     caad_results = evaluate(retrieve_caad, "CAAD")
-#     whitecaad_results = evaluate(retrieve_whitecaad, "whiteCAAD")
+def load_pca_ica_model(corpus_embs, model_name, dataset, split):
+    pca_dim=0.96
+    pca_ica_path = f"models/pca_ica/{model_name}_{dataset}_{split}_{'_'.join(str(pca_dim).split('.'))}.pkl"
+    if os.path.exists(pca_ica_path):
+        print(f"Loading PCA + ICA model from {pca_ica_path}")
+        return PCAICAWhitening.load(pca_ica_path)
+    else:
+        print(f"Computing PCA + ICA model and saving to {pca_ica_path}")
+        pca_ica_model = PCAICAWhitening.fit(corpus_embs, pca_dim=pca_dim)
+        pca_ica_model.save(pca_ica_path)
+        return pca_ica_model
 
-#     # === Print Summary ===
-#     print(f"\n--- QQP Benchmark Results (TOP_K={top_k}) ---")
-#     for res in [faiss_results, annoy_results, hnsw_results, caad_results, whitecaad_results]:
-#         print(res)
 
-# # To run this independently:
-# # from sentence_transformers import SentenceTransformer
-# # from your_module import PCAICAWhiteningModel, load_embeddings, load_sts_embeddings # Assuming your modules
-# # st_model = SentenceTransformer('all-roberta-large-v1', trust_remote_code=True)
-# # # Load data and train whitening model (assuming these functions exist and work independently)
-# # convo_embs = load_embeddings("convo_emb.npy")
-# # sts_embeddings, _ = load_sts_embeddings(st_model, split='train', score_threshold=0.0)
-# # if convo_embs is not None and sts_embeddings.size > 0:
-# #     EMB_DIM = 512 # Or the dimension you used for training
-# #     whitening_model = PCAICAWhiteningModel.fit(np.concatenate((sts_embeddings, convo_embs), axis=0), EMB_DIM)
-# #     run_qqp_benchmark(st_model, whitening_model=whitening_model, subset_size=800, target_size=200, top_k=3)
-# # else:
-# #      run_qqp_benchmark(st_model, subset_size=800, target_size=200, top_k=3) # Run without whitening if data not available
+def setup_cobweb_basic(corpus, corpus_embs):
+    cobweb = CobwebWrapper(corpus = corpus, corpus_embeddings=corpus_embs, encode_func=lambda x: x)
+    return cobweb
+
+def retrieve_cobweb_basic(query_emb, k, cobweb):
+    return cobweb.cobweb_predict(query_emb, k)
+    
+def setup_faiss(corpus_embs):
+    dim = corpus_embs.shape[1]
+    index = faiss.IndexFlatIP(dim)
+    index.add(corpus_embs)
+    return index
+
+def retrieve_faiss(query_emb, k, index, corpus):
+    _, ids = index.search(np.expand_dims(query_emb, axis=0), k)
+    return [corpus[i] for i in ids[0]]
+
+def setup_annoy(corpus_embs):
+    dim = corpus_embs.shape[1]
+    index = AnnoyIndex(dim, 'angular')
+    for i, emb in enumerate(corpus_embs):
+        index.add_item(i, emb)
+    index.build(10)
+    return index
+
+def retrieve_annoy(query_emb, k, index, corpus):
+    ids = index.get_nns_by_vector(query_emb, k)
+    return [corpus[i] for i in ids]
+
+def setup_hnsw(corpus_embs):
+    dim = corpus_embs.shape[1]
+    index = hnswlib.Index(space='cosine', dim=dim)
+    index.init_index(max_elements=len(corpus_embs), ef_construction=100, M=16)
+    index.add_items(corpus_embs, np.arange(len(corpus_embs)))
+    index.set_ef(50)
+    return index
+
+def retrieve_hnsw(query_emb, k, index, corpus):
+    ids, _ = index.knn_query(query_emb, k=k)
+    return [corpus[i] for i in ids[0]]
+
+# === Evaluation Function ===
+
+# def evaluate_retrieval(name, queries, targets, retrieve_fn, top_k=3):
+#     hits, mrr_total, ndcg_total = 0, 0, 0
+#     latencies = []
+
+#     for query, target in tqdm(zip(queries, targets), total=len(queries), desc=f"Evaluating {name}"):
+#         start = time.time()
+#         retrieved = retrieve_fn(query, top_k)
+#         latencies.append(time.time() - start)
+
+#         if target in retrieved:
+#             hits += 1
+#             rank = retrieved.index(target) + 1
+#             mrr_total += 1 / rank
+
+#         relevance = [1 if doc == target else 0 for doc in retrieved]
+#         if sum(relevance) > 0:
+#             ideal = sorted(relevance, reverse=True)
+#             actual = list(range(len(relevance), 0, -1))
+#             ndcg_total += ndcg_score([ideal], [actual])
+
+#     n = len(queries)
+#     return {
+#         "method": name,
+#         f"recall@{top_k}": round(hits / n, 4),
+#         f"mrr@{top_k}": round(mrr_total / n, 4),
+#         f"ndcg@{top_k}": round(ndcg_total / n, 4),
+#         "avg_latency_ms": round(1000 * np.mean(latencies), 2)
+#     }
+
+
+def get_eval_ks(top_k):
+    """Return a list of k-values to evaluate based on top_k."""
+    base = [3, 5, 10, 20, 50, 100]
+    return sorted([k for k in base if k <= top_k])
+
+def evaluate_retrieval(name, queries, targets, retrieve_fn, top_k=10):
+    ks = get_eval_ks(top_k)
+    metrics = {
+        f"recall@{k}": 0 for k in ks
+    }
+    metrics.update({
+        f"mrr@{k}": 0 for k in ks
+    })
+    metrics.update({
+        f"ndcg@{k}": 0 for k in ks
+    })
+
+    latencies = []
+
+    for query, target in tqdm(zip(queries, targets), total=len(queries), desc=f"Evaluating {name}"):
+        start = time.time()
+        retrieved = retrieve_fn(query, top_k)
+        latencies.append(time.time() - start)
+
+        for k in ks:
+            top_k_results = retrieved[:k]
+            if target in top_k_results:
+                metrics[f"recall@{k}"] += 1
+                rank = top_k_results.index(target) + 1
+                metrics[f"mrr@{k}"] += 1 / rank
+            relevance = [1 if doc == target else 0 for doc in top_k_results]
+            if sum(relevance) > 0:
+                ideal = sorted(relevance, reverse=True)
+                ndcg = ndcg_score([ideal], [relevance])
+                metrics[f"ndcg@{k}"] += ndcg
+
+    n = len(queries)
+    for k in ks:
+        metrics[f"recall@{k}"] = round(metrics[f"recall@{k}"] / n, 4)
+        metrics[f"mrr@{k}"] = round(metrics[f"mrr@{k}"] / n, 4)
+        metrics[f"ndcg@{k}"] = round(metrics[f"ndcg@{k}"] / n, 4)
+    
+    metrics["time_taken"] = round(np.sum(latencies), 2)
+    metrics["method"] = name
+    metrics["avg_latency_ms"] = round(1000 * np.mean(latencies), 2)
+
+    return metrics
+
+def print_metrics_table(metrics, save_path=None):
+    method = metrics.pop("method", "Unknown")
+    latency = metrics.pop("avg_latency_ms", None)
+    total_time = metrics.pop("time_taken", 0)
+
+    rows = []
+    ks = sorted(set(int(k.split('@')[1]) for k in metrics if '@' in k))
+    for k in ks:
+        row = [
+            f"@{k}",
+            metrics.get(f"recall@{k}", 0),
+            metrics.get(f"mrr@{k}", 0),
+            metrics.get(f"ndcg@{k}", 0)
+        ]
+        rows.append(row)
+
+    table_str = f"\n--- Metrics for {method} ---\n"
+    if latency is not None:
+        table_str += f"Avg Latency: {latency} ms with total time {total_time} seconds\n"
+    table_str += tabulate(rows, headers=["k", "Recall", "MRR", "nDCG"], tablefmt="pretty")
+
+    print(table_str)
+
+    if save_path:
+        with open(save_path, "a") as f: 
+            f.write(table_str + "\n")
+
+
+
+# === Main Benchmark Runner ===
+
+def run_qqp_benchmark(model_name, subset_size=5000, split = "test", target_size=700, top_k=3, compute = True):
+    print(f"\n--- Running QQP Benchmark (TOP_K={top_k}) ---")
+
+    corpus, queries, targets = None, None, None
+    if compute:
+        dataset = load_dataset("quora", split=split, trust_remote_code=True)
+        duplicates = [ex for ex in dataset if ex["is_duplicate"] == 1]
+        shuffle(duplicates)
+
+        sampled = randsample(duplicates, subset_size)
+        queries = [ex["questions"]["text"][0] for ex in sampled[:target_size]]
+        targets = [ex["questions"]["text"][1] for ex in sampled[:target_size]]
+        corpus = [ex["questions"]["text"][1] for ex in sampled]
+
+        print("Corpus size:", len(corpus))
+
+    corpus_embs = load_or_compute_embeddings(corpus, model_name, "qqp_corpus", split, compute = compute)
+    print(f"Corpus embeddings shape: {corpus_embs.shape}")
+    queries_embs = load_or_compute_embeddings(queries, model_name, "qqp_queries", split, compute = compute)
+    print(f"Queries embeddings shape: {queries_embs.shape}")
+    targets = load_saved_sentences(targets, model_name, "qqp_targets", split, compute = compute)
+    corpus = load_saved_sentences(corpus, model_name, "qqp_corpus", split, compute = compute)
+
+    pca_ica_model = load_pca_ica_model(corpus_embs, model_name, "qqp_corpus", split)
+    print(f"PCA/ICA model loaded: {pca_ica_model}")
+
+    print(f"Starting PCA and ICA embeddings transformation...")
+    pca_corpus_embs = pca_ica_model.transform(corpus_embs, is_ica=False)
+    pca_queries_embs = pca_ica_model.transform(queries_embs, is_ica=False)
+
+    pca_ica_corpus_embs = pca_ica_model.transform(corpus_embs)
+    pca_ica_queries_embs = pca_ica_model.transform(queries_embs)
+    print(f"PCA and ICA embeddings transformation completed.")
+
+
+    # Setup retrieval methods
+    results = []
+    save_path = f"outputs/qqp_benchmark_{model_name}_c{subset_size}_t{target_size}_{split}.txt"
+    print(f"Setting up FAISS...")
+    faiss_index = setup_faiss(corpus_embs)
+    results.append(evaluate_retrieval("FAISS", queries_embs, targets, lambda q, k: retrieve_faiss(q, k, faiss_index, corpus), top_k))
+    print(f"--- FAISS Metrics ---")
+    print_metrics_table(results[-1], save_path=save_path)
+
+    print(f"Setting up Basic Cobweb...")
+    cobweb = load_cobweb_model(model_name, corpus, corpus_embs, split, "base")
+    results.append(evaluate_retrieval("Cobweb", queries_embs, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb), top_k))
+    print(f"--- Basic Cobweb Metrics ---")
+    print_metrics_table(results[-1], save_path=save_path)
+
+    print(f"Setting up PCA Cobweb...")
+    cobweb_pca = load_cobweb_model(model_name, corpus, pca_corpus_embs, split, "pca")
+    results.append(evaluate_retrieval("Cobweb PCA", pca_queries_embs, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb_pca), top_k))
+    print(f"--- Cobweb PCA Metrics ---")
+    print_metrics_table(results[-1], save_path=save_path)
+
+    print(f"Setting up PCA + ICA Cobweb...")
+    cobweb_pca_ica = load_cobweb_model(model_name, corpus, pca_ica_corpus_embs, split, "pca_ica")
+    results.append(evaluate_retrieval("Cobweb PCA + ICA", pca_ica_queries_embs, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb_pca_ica), top_k))
+    print(f"--- Cobweb PCA + ICA Metrics ---")
+    print_metrics_table(results[-1], save_path=save_path)
+
+    # annoy_index = setup_annoy(corpus_embs)
+    # hnsw_index = setup_hnsw(corpus_embs)
+    # results.append(evaluate_retrieval("Annoy", queries_embs, targets, lambda q, k: retrieve_annoy(q, k, annoy_index, corpus), top_k))
+    # results.append(evaluate_retrieval("HNSWLIB", queries_embs, targets, lambda q, k: retrieve_hnsw(q, k, hnsw_index, corpus), top_k))
+
+    return results
+
+if __name__ == "__main__":
+    model_name = 'all-roberta-large-v1'  # Example model
+    results = run_qqp_benchmark(model_name, split="train", top_k=10, compute = False)  # Adjust split and top_k as needed
+    

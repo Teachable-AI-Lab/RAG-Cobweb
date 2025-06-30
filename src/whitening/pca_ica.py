@@ -27,7 +27,7 @@ class PCAICAWhiteningModel:
             f")"
         )
 
-    def transform(self, x: np.ndarray) -> np.ndarray:
+    def transform(self, x: np.ndarray, is_ica = True) -> np.ndarray:
         """
         Apply PCA + ICA whitening to a single embedding or a batch.
         """
@@ -43,9 +43,12 @@ class PCAICAWhiteningModel:
         x_pca /= np.sqrt(self.pca_explained_var + self.eps)
 
         # Step 3: ICA transform
-        x_ica = np.dot(x_pca, self.ica_unmixing.T)
-
-        return x_ica[0] if is_single else x_ica
+        if is_ica:
+            x_ica = np.dot(x_pca, self.ica_unmixing.T)
+            return x_ica[0] if is_single else x_ica
+        else:
+            # If not using ICA, return PCA normalized output
+            return x_pca[0] if is_single else x_pca
 
     @classmethod
     def fit(cls, X: np.ndarray, pca_dim: int = 256, eps: float = 1e-8,
