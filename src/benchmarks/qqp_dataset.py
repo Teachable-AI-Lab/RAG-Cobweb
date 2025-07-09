@@ -54,7 +54,7 @@ def load_saved_sentences(targets, model_name, dataset, split, compute = False):
 
 def load_cobweb_model(model_name, corpus, corpus_embs, split, mode):
     cobweb_path = f"models/cobweb_wrappers/{model_name}_{split}_{mode}.json"
-    if os.path.exists(cobweb_path):
+    if os.path.exists(cobweb_path) and False:
         print(f"Loading Cobweb model from {cobweb_path}")
         with open(cobweb_path, 'r') as f:
             cobweb_json = json.load(f)
@@ -77,13 +77,15 @@ def load_pca_ica_model(corpus_embs, model_name, dataset, split):
         pca_ica_model.save(pca_ica_path)
         return pca_ica_model
 
-
 def setup_cobweb_basic(corpus, corpus_embs):
     cobweb = CobwebWrapper(corpus = corpus, corpus_embeddings=corpus_embs, encode_func=lambda x: x)
     return cobweb
 
-def retrieve_cobweb_basic(query_emb, k, cobweb):
-    return cobweb.cobweb_predict(query_emb, k)
+def retrieve_cobweb_basic(query_emb, k, cobweb, use_fast=False):
+    if use_fast:
+        return cobweb.cobweb_predict_fast(query_emb, k)
+    else:
+        return cobweb.cobweb_predict(query_emb, k)
     
 def setup_faiss(corpus_embs):
     dim = corpus_embs.shape[1]
@@ -120,36 +122,6 @@ def retrieve_hnsw(query_emb, k, index, corpus):
     return [corpus[i] for i in ids[0]]
 
 # === Evaluation Function ===
-
-# def evaluate_retrieval(name, queries, targets, retrieve_fn, top_k=3):
-#     hits, mrr_total, ndcg_total = 0, 0, 0
-#     latencies = []
-
-#     for query, target in tqdm(zip(queries, targets), total=len(queries), desc=f"Evaluating {name}"):
-#         start = time.time()
-#         retrieved = retrieve_fn(query, top_k)
-#         latencies.append(time.time() - start)
-
-#         if target in retrieved:
-#             hits += 1
-#             rank = retrieved.index(target) + 1
-#             mrr_total += 1 / rank
-
-#         relevance = [1 if doc == target else 0 for doc in retrieved]
-#         if sum(relevance) > 0:
-#             ideal = sorted(relevance, reverse=True)
-#             actual = list(range(len(relevance), 0, -1))
-#             ndcg_total += ndcg_score([ideal], [actual])
-
-#     n = len(queries)
-#     return {
-#         "method": name,
-#         f"recall@{top_k}": round(hits / n, 4),
-#         f"mrr@{top_k}": round(mrr_total / n, 4),
-#         f"ndcg@{top_k}": round(ndcg_total / n, 4),
-#         "avg_latency_ms": round(1000 * np.mean(latencies), 2)
-#     }
-
 
 def get_eval_ks(top_k):
     """Return a list of k-values to evaluate based on top_k."""
@@ -223,7 +195,7 @@ def print_metrics_table(metrics, save_path=None):
     print(table_str)
 
     if save_path:
-        with open(save_path, "a") as f: 
+        with open(save_path, "a+") as f: 
             f.write(table_str + "\n")
 
 
@@ -253,16 +225,16 @@ def run_qqp_benchmark(model_name, subset_size=5000, split = "test", target_size=
     targets = load_saved_sentences(targets, model_name, "qqp_targets", split, compute = compute)
     corpus = load_saved_sentences(corpus, model_name, "qqp_corpus", split, compute = compute)
 
-    pca_ica_model = load_pca_ica_model(corpus_embs, model_name, "qqp_corpus", split)
-    print(f"PCA/ICA model loaded: {pca_ica_model}")
+    # pca_ica_model = load_pca_ica_model(corpus_embs, model_name, "qqp_corpus", split)
+    # print(f"PCA/ICA model loaded: {pca_ica_model}")
 
-    print(f"Starting PCA and ICA embeddings transformation...")
-    pca_corpus_embs = pca_ica_model.transform(corpus_embs, is_ica=False)
-    pca_queries_embs = pca_ica_model.transform(queries_embs, is_ica=False)
+    # print(f"Starting PCA and ICA embeddings transformation...")
+    # pca_corpus_embs = pca_ica_model.transform(corpus_embs, is_ica=False)
+    # pca_queries_embs = pca_ica_model.transform(queries_embs, is_ica=False)
 
-    pca_ica_corpus_embs = pca_ica_model.transform(corpus_embs)
-    pca_ica_queries_embs = pca_ica_model.transform(queries_embs)
-    print(f"PCA and ICA embeddings transformation completed.")
+    # pca_ica_corpus_embs = pca_ica_model.transform(corpus_embs)
+    # pca_ica_queries_embs = pca_ica_model.transform(queries_embs)
+    # print(f"PCA and ICA embeddings transformation completed.")
 
 
     # Setup retrieval methods
@@ -277,29 +249,35 @@ def run_qqp_benchmark(model_name, subset_size=5000, split = "test", target_size=
     print(f"Setting up Basic Cobweb...")
     cobweb = load_cobweb_model(model_name, corpus, corpus_embs, split, "base")
     results.append(evaluate_retrieval("Cobweb", queries_embs, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb), top_k))
+    if len(results) < 2:
+        print("ERROR")
     print(f"--- Basic Cobweb Metrics ---")
     print_metrics_table(results[-1], save_path=save_path)
 
-    print(f"Setting up PCA Cobweb...")
-    cobweb_pca = load_cobweb_model(model_name, corpus, pca_corpus_embs, split, "pca")
-    results.append(evaluate_retrieval("Cobweb PCA", pca_queries_embs, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb_pca), top_k))
-    print(f"--- Cobweb PCA Metrics ---")
+    results.append(evaluate_retrieval("Cobweb Fast", queries_embs, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb, use_fast=True), top_k))
+    print(f"--- Cobweb Fast Metrics ---")
     print_metrics_table(results[-1], save_path=save_path)
 
-    print(f"Setting up PCA + ICA Cobweb...")
-    cobweb_pca_ica = load_cobweb_model(model_name, corpus, pca_ica_corpus_embs, split, "pca_ica")
-    results.append(evaluate_retrieval("Cobweb PCA + ICA", pca_ica_queries_embs, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb_pca_ica), top_k))
-    print(f"--- Cobweb PCA + ICA Metrics ---")
-    print_metrics_table(results[-1], save_path=save_path)
 
-    # annoy_index = setup_annoy(corpus_embs)
-    # hnsw_index = setup_hnsw(corpus_embs)
-    # results.append(evaluate_retrieval("Annoy", queries_embs, targets, lambda q, k: retrieve_annoy(q, k, annoy_index, corpus), top_k))
-    # results.append(evaluate_retrieval("HNSWLIB", queries_embs, targets, lambda q, k: retrieve_hnsw(q, k, hnsw_index, corpus), top_k))
+    # print(f"Setting up PCA Cobweb...")
+    # cobweb_pca = load_cobweb_model(model_name, corpus, pca_corpus_embs, split, "pca")
+    # results.append(evaluate_retrieval("Cobweb PCA", pca_queries_embs, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb_pca), top_k))
+    # print(f"--- Cobweb PCA Metrics ---")
+    # print_metrics_table(results[-1], save_path=save_path)
+
+    # print(f"Setting up PCA + ICA Cobweb...")
+    # cobweb_pca_ica = load_cobweb_model(model_name, corpus, pca_ica_corpus_embs, split, "pca_ica")
+    # results.append(evaluate_retrieval("Cobweb PCA + ICA", pca_ica_queries_embs, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb_pca_ica), top_k))
+    # print(f"--- Cobweb PCA + ICA Metrics ---")
+    # print_metrics_table(results[-1], save_path=save_path)
+    # results.append(evaluate_retrieval("Cobweb PCA + ICA Fast", pca_ica_queries_embs, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb_pca_ica, use_fast=True), top_k))
+    # print(f"--- Cobweb PCA + ICA Fast Metrics ---")
+    # print_metrics_table(results[-1], save_path=save_path)
 
     return results
 
 if __name__ == "__main__":
     model_name = 'all-roberta-large-v1'  # Example model
     results = run_qqp_benchmark(model_name, split="train", top_k=10, compute = False)  # Adjust split and top_k as needed
-    
+    for res in results:
+        print_metrics_table(res)

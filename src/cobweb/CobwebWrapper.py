@@ -1,5 +1,6 @@
 import torch
 import json
+import math
 from src.cobweb.CobwebTorchTree import CobwebTorchTree
 from tqdm import tqdm
 
@@ -12,7 +13,6 @@ class CobwebWrapper:
         self.encode_func = encode_func
 
         self.sentences = []
-        self.embeddings = []
         self.sentence_to_node = {}
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -57,10 +57,66 @@ class CobwebWrapper:
                                    total=len(new_sentences),
                                    desc="Training CobwebTree"):
             self.sentences.append(sent)
-            self.embeddings.append(emb)
             leaf = self.tree.ifit(torch.tensor(emb, device=self.device))
             leaf.sentence_id = start_index + i
             self.sentence_to_node[start_index + i] = leaf
+
+
+    def cobweb_predict_fast(self, input, k=5, return_ids=False, is_embedding=False):
+        """
+        Ultra-fast prediction using sentence_to_node mapping directly.
+        Bypasses tree traversal entirely by using the leaf node mapping.
+        """
+        if is_embedding:
+            emb = input
+        else:
+            emb = self.encode_func([input])[0]
+
+        x = torch.tensor(emb, device=self.device).unsqueeze(0)  # (1, D)
+        
+        # Get all leaf nodes directly from sentence_to_node
+        leaf_nodes = list(self.sentence_to_node.values())
+        
+        if not leaf_nodes:
+            return []
+        
+        # Pre-allocate tensors for vectorized computation
+        num_leaves = len(leaf_nodes)
+        leaf_means = torch.zeros(num_leaves, self.tree.shape[0], device=self.device)
+        leaf_vars = torch.zeros(num_leaves, self.tree.shape[0], device=self.device)
+        
+        # Fill tensors efficiently
+        for i, node in enumerate(leaf_nodes):
+            leaf_means[i] = node.mean
+            leaf_vars[i] = torch.clamp(node.meanSq / node.count, min=1e-8)
+        
+        # Vectorized log probability computation
+        log_2pi = math.log(2 * math.pi)
+        diff_sq = (x - leaf_means) ** 2  # (N, D)
+        
+        log_probs = -0.5 * (
+            log_2pi * self.tree.shape[0] +
+            torch.log(leaf_vars).sum(dim=1) +
+            (diff_sq / leaf_vars).sum(dim=1)
+        )
+        
+        # Get top-k results
+        if k >= num_leaves:
+            sorted_indices = torch.argsort(log_probs, descending=True)
+            selected_nodes = [leaf_nodes[idx] for idx in sorted_indices]
+        else:
+            _, topk_indices = torch.topk(log_probs, k, largest=True)
+            selected_nodes = [leaf_nodes[idx] for idx in topk_indices]
+        
+        # Convert to sentence IDs or sentences
+        results = []
+        for node in selected_nodes:
+            sid = getattr(node, 'sentence_id', None)
+            if sid is None or sid >= len(self.sentences):
+                continue
+            results.append(sid if return_ids else self.sentences[sid])
+        
+        return results
 
     def cobweb_predict(self, input, k=5, return_ids=False, is_embedding=False):
         """
@@ -117,9 +173,6 @@ class CobwebWrapper:
         wrapper_state = {
             "tree": json.loads(self.tree.dump_json()),
             "sentences": self.sentences,
-            "sentence_to_node": {str(k): v.id for k, v in self.sentence_to_node.items()},
-            "device": self.device,
-            "max_init_search": self.max_init_search,
             "embedding_dim": self.tree.shape[0] if hasattr(self.tree, 'shape') else None
         }
         if save_path:
@@ -146,11 +199,14 @@ class CobwebWrapper:
             data = json_data
 
         # Load tree
-        tree = CobwebTorchTree.load_json(data["tree"])
+        tree = CobwebTorchTree(1024)
+        print("Loading tree from JSON...")
+        tree.load_json(json.dumps(data["tree"]))
 
         # Initialize wrapper with minimal setup
-        wrapper = CobwebWrapper(corpus=[], encode_func=encode_func)
+        wrapper = CobwebWrapper.__new__(CobwebWrapper)
         wrapper.tree = tree
+        wrapper.encode_func = encode_func
 
         # Restore attributes
         wrapper.sentences = data.get("sentences", [])
@@ -158,22 +214,16 @@ class CobwebWrapper:
         wrapper.max_init_search = data.get("max_init_search", 100000)
 
         # Reconstruct sentence_to_node mapping
-        wrapper.sentence_to_node = {}
-        id_to_node = {}
-
-        def _index_nodes(node):
-            id_to_node[node.id] = node
+        sentence_to_node = {}
+        def _index_nodes(node, st):
+            if hasattr(node, 'sentence_id') and node.sentence_id is not None:
+                sentence_to_node[node.sentence_id] = node
             for child in getattr(node, "children", []):
-                _index_nodes(child)
+                _index_nodes(child, st)
 
-        _index_nodes(wrapper.tree.root)
-
-        for sid_str, node_id in data.get("sentence_to_node", {}).items():
-            sid = int(sid_str)
-            wrapper.sentence_to_node[sid] = id_to_node.get(node_id, None)
-
-        # Optional: embeddings can be lazily reconstructed if needed later
-        wrapper.embeddings = [None] * len(wrapper.sentences)
+        _index_nodes(wrapper.tree.root, sentence_to_node)
+        wrapper.sentence_to_node = sentence_to_node
+        wrapper.print_tree()
 
         return wrapper
 
