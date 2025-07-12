@@ -44,10 +44,13 @@ def load_or_compute_embeddings(texts, model_name, dataset, split, compute = Fals
             inputs = tokenizer(texts, return_tensors='pt', padding=True).input_ids
             with torch.no_grad():
                 outputs = model(input_ids = inputs)
-            embeddings = outputs.last_hidden_state.numpy()
+            embeddings = outputs.last_hidden_state.mean(dim=1).numpy()
         else:
             model = SentenceTransformer(model_name, trust_remote_code=True)
             embeddings = model.encode(texts, convert_to_numpy=True, normalize_embeddings=True)
+        print(f"Computed embeddings shape: {embeddings.shape}")
+        if len(embeddings.shape) != 2:
+            raise ValueError(f"Embeddings for {model_name} should be 2D, got {embeddings.shape}. Check the model and input texts.")
         np.save(path, embeddings)
         return embeddings
 
@@ -214,7 +217,7 @@ def print_metrics_table(metrics, save_path=None):
 
 # === Main Benchmark Runner ===
 
-def run_qqp_benchmark(model_name, subset_size=5000, split = "test", target_size=700, top_k=3, compute = True):
+def run_qqp_benchmark(model_name, subset_size=7500, split = "test", target_size=750, top_k=3, compute = True):
     print(f"\n--- Running QQP Benchmark (TOP_K={top_k}) ---")
 
     corpus, queries, targets = None, None, None
@@ -241,8 +244,8 @@ def run_qqp_benchmark(model_name, subset_size=5000, split = "test", target_size=
     print(f"PCA/ICA model loaded: {pca_ica_model}")
 
     print(f"Starting PCA and ICA embeddings transformation...")
-    # pca_corpus_embs = pca_ica_model.transform(corpus_embs, is_ica=False)
-    # pca_queries_embs = pca_ica_model.transform(queries_embs, is_ica=False)
+    pca_corpus_embs = pca_ica_model.transform(corpus_embs, is_ica=False)
+    pca_queries_embs = pca_ica_model.transform(queries_embs, is_ica=False)
 
     pca_ica_corpus_embs = pca_ica_model.transform(corpus_embs)
     pca_ica_queries_embs = pca_ica_model.transform(queries_embs)
@@ -266,16 +269,16 @@ def run_qqp_benchmark(model_name, subset_size=5000, split = "test", target_size=
     print(f"--- Basic Cobweb Metrics ---")
     print_metrics_table(results[-1], save_path=save_path)
 
-    # results.append(evaluate_retrieval("Cobweb Fast", queries_embs, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb, use_fast=True), top_k))
-    # print(f"--- Cobweb Fast Metrics ---")
-    # print_metrics_table(results[-1], save_path=save_path)
+    results.append(evaluate_retrieval("Cobweb Fast", queries_embs, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb, use_fast=True), top_k))
+    print(f"--- Cobweb Fast Metrics ---")
+    print_metrics_table(results[-1], save_path=save_path)
 
 
-    # print(f"Setting up PCA Cobweb...")
-    # cobweb_pca = load_cobweb_model(model_name, corpus, pca_corpus_embs, split, "pca")
-    # results.append(evaluate_retrieval("Cobweb PCA", pca_queries_embs, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb_pca), top_k))
-    # print(f"--- Cobweb PCA Metrics ---")
-    # print_metrics_table(results[-1], save_path=save_path)
+    print(f"Setting up PCA Cobweb...")
+    cobweb_pca = load_cobweb_model(model_name, corpus, pca_corpus_embs, split, "pca")
+    results.append(evaluate_retrieval("Cobweb PCA", pca_queries_embs, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb_pca), top_k))
+    print(f"--- Cobweb PCA Metrics ---")
+    print_metrics_table(results[-1], save_path=save_path)
 
     print(f"Setting up PCA + ICA Cobweb...")
     cobweb_pca_ica = load_cobweb_model(model_name, corpus, pca_ica_corpus_embs, split, "pca_ica")
@@ -283,14 +286,14 @@ def run_qqp_benchmark(model_name, subset_size=5000, split = "test", target_size=
     print(f"--- Cobweb PCA + ICA Metrics ---")
     print_metrics_table(results[-1], save_path=save_path)
     results.append(evaluate_retrieval("Cobweb PCA + ICA Fast", pca_ica_queries_embs, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb_pca_ica, use_fast=True), top_k))
-    # print(f"--- Cobweb PCA + ICA Fast Metrics ---")
-    # print_metrics_table(results[-1], save_path=save_path)
+    print(f"--- Cobweb PCA + ICA Fast Metrics ---")
+    print_metrics_table(results[-1], save_path=save_path)
 
     return results
 
 if __name__ == "__main__":
-    # model_name = 'all-roberta-large-v1'  # Example model
-    model_name = "google-t5/t5-base"
+    model_name = 'all-roberta-large-v1'  # Example model
+    # model_name = "google-t5/t5-base"
     results = run_qqp_benchmark(model_name, split="train", top_k=10, compute = True)  # Adjust split and top_k as needed
     for res in results:
         print_metrics_table(res)
