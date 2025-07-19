@@ -5,6 +5,7 @@ from transformers import AutoModel, AutoTokenizer
 from datasets import load_dataset
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+import os
 
 class ProjectionHead(nn.Module):
     def __init__(self, input_dim=768, proj_dim=256):
@@ -75,11 +76,11 @@ def vicreg_loss(z1, z2, sim_weight=25.0, var_weight=25.0, cov_weight=1.0, eps=1e
     return sim_weight * sim_loss + var_weight * var_loss + cov_weight * cov_loss
 
 
-def load_qqp_pairs(tokenizer, max_length=64):
+def load_qqp_pairs(tokenizer, max_length=128):
     dataset = load_dataset("glue", "qqp")["train"]
-    dataset = dataset.filter(lambda x: x["is_duplicate"] == 1)
-    texts1 = dataset["question1"]
-    texts2 = dataset["question2"]
+    dataset = dataset.filter(lambda x: x["label"] == 1)
+    texts1 = list(dataset["question1"])
+    texts2 = list(dataset["question2"])
 
     encodings1 = tokenizer(texts1, truncation=True, padding=True, max_length=max_length, return_tensors="pt")
     encodings2 = tokenizer(texts2, truncation=True, padding=True, max_length=max_length, return_tensors="pt")
@@ -116,6 +117,27 @@ def train():
 
         print(f"Epoch {epoch+1} - Loss: {total_loss:.4f}")
 
+    save_dir = "whitening_roberta"
+    os.makedirs(save_dir, exist_ok=True)
+
+    # Save encoder + projection head
+    torch.save(model.state_dict(), os.path.join(save_dir, "pytorch_model.bin"))
+
+    # Save tokenizer + base model config
+    model.encoder.config.save_pretrained(save_dir)
+    tokenizer.save_pretrained(save_dir)
+
+class WhitenedRoberta(nn.Module):
+    def __init__(self, model_path="whitening_roberta", proj_dim=256):
+        super().__init__()
+        self.encoder = AutoModel.from_pretrained(model_path)
+        self.proj = ProjectionHead(input_dim=self.encoder.config.hidden_size, proj_dim=proj_dim)
+        self.load_state_dict(torch.load(os.path.join(model_path, "pytorch_model.bin")))
+
+    def forward(self, input_ids, attention_mask):
+        output = self.encoder(input_ids=input_ids, attention_mask=attention_mask)
+        cls_embed = output.last_hidden_state[:, 0]
+        return self.proj(cls_embed)
 
 if __name__ == "__main__":
     train()
