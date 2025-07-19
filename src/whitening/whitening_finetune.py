@@ -10,14 +10,19 @@ import os
 class ProjectionHead(nn.Module):
     def __init__(self, input_dim=768, proj_dim=256):
         super().__init__()
-        self.mlp = nn.Sequential(
+        self.net = nn.Sequential(
             nn.Linear(input_dim, proj_dim),
-            nn.ReLU(),
-            nn.Linear(proj_dim, proj_dim)
+            nn.GELU(),
+            nn.LayerNorm(proj_dim),
+            nn.Linear(proj_dim, proj_dim),
+            nn.LayerNorm(proj_dim),
         )
 
     def forward(self, x):
-        return self.mlp(x)
+        z = self.net(x)
+        z = z - z.mean(dim=0, keepdim=True)
+        return z
+
 
 class DocumentEncoder(nn.Module):
     def __init__(self, model_name='roberta-base', proj_dim=256):
@@ -27,9 +32,13 @@ class DocumentEncoder(nn.Module):
 
     def forward(self, input_ids, attention_mask):
         output = self.encoder(input_ids=input_ids, attention_mask=attention_mask)
-        cls_embed = output.last_hidden_state[:, 0]  # [CLS]
-        return self.proj(cls_embed)
+        cls_embed = output.last_hidden_state[:, 0]
+        z = self.proj(cls_embed)
 
+        # Optional: L2 normalize output
+        # z = nn.functional.normalize(z, p=2, dim=1)
+
+        return z
 
 def cu_similarity(z1, z2, eps=1e-8):
     var1 = z1.var(dim=0, unbiased=False) + eps
@@ -38,7 +47,6 @@ def cu_similarity(z1, z2, eps=1e-8):
 
     gain = 0.5 * (torch.log(var_comb) - 0.5 * (torch.log(var1) + torch.log(var2)))
     return gain.sum()
-
 
 def cu_contrastive_loss(z1, z2, temperature=0.05):
     B = z1.size(0)
@@ -52,33 +60,40 @@ def cu_contrastive_loss(z1, z2, temperature=0.05):
     labels = torch.arange(B).to(z1.device)
     return F.cross_entropy(logits, labels)
 
+def off_diagonal(x):
+    n, m = x.shape
+    assert n == m
+    return x.flatten()[:-1].view(n - 1, n + 1)[:, 1:].flatten()
 
-def vicreg_loss(z1, z2, sim_weight=25.0, var_weight=25.0, cov_weight=1.0, eps=1e-4):
-    # Invariance
+
+def vicreg_loss(z1, z2, lambda_inv=25.0, mu_var=25.0, nu_cov=1.0):
+    # Invariance (alignment)
     sim_loss = F.mse_loss(z1, z2)
 
     # Variance
-    def variance_term(z):
-        std = torch.sqrt(z.var(dim=0) + eps)
-        return torch.mean(F.relu(1 - std))
-
-    var_loss = variance_term(z1) + variance_term(z2)
+    std_z1 = torch.sqrt(z1.var(dim=0) + 1e-4)
+    std_z2 = torch.sqrt(z2.var(dim=0) + 1e-4)
+    var_loss = torch.mean(F.relu(1 - std_z1)) + torch.mean(F.relu(1 - std_z2))
 
     # Covariance
-    def covariance_term(z):
-        z = z - z.mean(dim=0)
-        cov = (z.T @ z) / (z.shape[0] - 1)
-        off_diag = cov - torch.diag(torch.diag(cov))
-        return (off_diag ** 2).sum() / z.shape[1]
+    z1_centered = z1 - z1.mean(dim=0)
+    z2_centered = z2 - z2.mean(dim=0)
+    cov_z1 = (z1_centered.T @ z1_centered) / (z1.shape[0] - 1)
+    cov_z2 = (z2_centered.T @ z2_centered) / (z2.shape[0] - 1)
+    cov_loss = off_diagonal(cov_z1).pow(2).sum() / z1.shape[1] + \
+               off_diagonal(cov_z2).pow(2).sum() / z2.shape[1]
 
-    cov_loss = covariance_term(z1) + covariance_term(z2)
+    return lambda_inv * sim_loss + mu_var * var_loss + nu_cov * cov_loss
 
-    return sim_weight * sim_loss + var_weight * var_loss + cov_weight * cov_loss
-
-
-def load_qqp_pairs(tokenizer, max_length=128):
+def load_qqp_pairs(tokenizer, max_length=128, limit=16700):
     dataset = load_dataset("glue", "qqp")["train"]
     dataset = dataset.filter(lambda x: x["label"] == 1)
+
+    print("Loaded", len(dataset), "instances through QQP dataset!")
+
+    if limit is not None:
+        dataset = dataset.select(range(min(limit, len(dataset))))
+
     texts1 = list(dataset["question1"])
     texts2 = list(dataset["question2"])
 
@@ -87,7 +102,6 @@ def load_qqp_pairs(tokenizer, max_length=128):
 
     return list(zip(encodings1["input_ids"], encodings1["attention_mask"],
                     encodings2["input_ids"], encodings2["attention_mask"]))
-
 
 def train():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -107,8 +121,8 @@ def train():
             z2 = model(q2_ids, q2_mask)
 
             loss_cu = cu_contrastive_loss(z1, z2)
-            loss_vic = vicreg_loss(z1, z2)
-            loss = loss_cu + loss_vic
+            loss_vic = vicreg_loss(z1, z2, lambda_inv=50.0, mu_var=50.0, nu_cov=5.0)
+            loss = loss_cu + 2 * loss_vic
 
             optimizer.zero_grad()
             loss.backward()
@@ -116,6 +130,8 @@ def train():
             total_loss += loss.item()
 
         print(f"Epoch {epoch+1} - Loss: {total_loss:.4f}")
+        epoch_loss = total_loss / len(dataloader)  # Use per-batch average
+        print(f"Epoch {epoch+1} avg loss: {epoch_loss:.4f}")
 
     save_dir = "whitening_roberta"
     os.makedirs(save_dir, exist_ok=True)
