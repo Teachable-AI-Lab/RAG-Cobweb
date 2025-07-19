@@ -1,9 +1,9 @@
 #!/bin/bash
-#SBATCH --job-name=basic_faiss_test
+#SBATCH --job-name=train_whitening
 #SBATCH --time=00:03:00
-#SBATCH --output=/nethome/agupta886/flash/slurm_outputs/basic_faiss_test.out
-#SBATCH --error=/nethome/agupta886/flash/slurm_errors/basic_faiss_test.err
-#SBATCH --partition="tail-lab"
+#SBATCH --output=/nethome/ksingara3/slurm_outputs/train_whitening.out
+#SBATCH --error=/nethome/ksingara3/slurm_errors/train_whitening.err
+#SBATCH --partition=debug
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=4
@@ -13,7 +13,7 @@
 export PYTHONUNBUFFERED=TRUE
 source ~/.bashrc
 conda activate rag-cobweb
-cd /nethome/agupta886/flash/RAG-Cobweb
+cd /nethome/ksingara3/RAG-Cobweb
 export PYTHONPATH=$(pwd)
 
 srun python src/whitening/whitening_finetune.py
