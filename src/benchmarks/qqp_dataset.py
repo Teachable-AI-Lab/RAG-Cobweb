@@ -7,7 +7,7 @@ from tqdm import tqdm
 from random import sample as randsample, shuffle
 from tabulate import tabulate
 
-from transformers import AutoTokenizer, T5EncoderModel
+from transformers import AutoTokenizer
 import torch
 from sentence_transformers import SentenceTransformer
 from datasets import load_dataset
@@ -22,6 +22,7 @@ import pandas as pd
 
 from src.cobweb.CobwebWrapper import CobwebWrapper
 from src.whitening.pca_ica import PCAICAWhiteningModel as PCAICAWhitening
+from src.whitening.zca import ZCAWhiteningModel as ZCAWhitening
 
 def get_embedding_path(model_name: str, dataset: str, split: str):
     os.makedirs("data/embeddings", exist_ok=True)
@@ -92,15 +93,15 @@ def load_pca_ica_model(corpus_embs, model_name, dataset, split):
         return pca_ica_model
 
 def load_zca_model(corpus_embs, model_name, dataset, split):
-    zca_path = f"models/zca/{model_name.replace('/', '-')}_{dataset}_{split}_{'_'.join(str(pca_dim).split('.'))}.pkl"
-    if os.path.exists(pca_ica_path):
+    zca_path = f"models/zca/{model_name.replace('/', '-')}_{dataset}_{split}_{'_'.join(str(1024).split('.'))}.pkl"
+    if os.path.exists(zca_path):
         print(f"Loading ZCA model from {zca_path}")
-        return PCAICAWhitening.load(zca_path)
+        return ZCAWhitening.load(zca_path)
     else:
         print(f"Computing ZCA model and saving to {zca_path}")
-        pca_ica_model = PCAICAWhitening.fit(corpus_embs, pca_dim=pca_dim)
-        pca_ica_model.save(zca_path)
-        return pca_ica_model
+        zca_model = ZCAWhitening.fit(corpus_embs)
+        zca_model.save(zca_path)
+        return zca_model
 
 def setup_cobweb_basic(corpus, corpus_embs):
     cobweb = CobwebWrapper(corpus = corpus, corpus_embeddings=corpus_embs, encode_func=lambda x: x)
@@ -232,16 +233,19 @@ def run_qqp_benchmark(model_name, subset_size=7500, split = "test", target_size=
 
     corpus, queries, targets = None, None, None
     if compute:
-        dataset = load_dataset("quora", split=split, trust_remote_code=True)
-        duplicates = [ex for ex in dataset if ex["is_duplicate"] == 1]
+        # Load QQP dataset and extract duplicates
+        dataset = load_dataset("glue", "qqp", split="train")
+
+        # Filter duplicates where label == 1
+        duplicates = [ex for ex in dataset if ex["label"] == 1]
+
         shuffle(duplicates)
+        sampled = randsample(duplicates, min(subset_size, len(duplicates)))
+        queries = [ex["question1"] for ex in sampled[:target_size]]
+        targets = [ex["question2"] for ex in sampled[:target_size]]
+        corpus = [ex["question2"] for ex in sampled]
 
-        sampled = randsample(duplicates, subset_size)
-        queries = [ex["questions"]["text"][0] for ex in sampled[:target_size]]
-        targets = [ex["questions"]["text"][1] for ex in sampled[:target_size]]
-        corpus = [ex["questions"]["text"][1] for ex in sampled]
-
-        print("Corpus size:", len(corpus))
+        print("Length of Corpus:", len(corpus))
 
     corpus_embs = load_or_compute_embeddings(corpus, model_name, "qqp_corpus", split, compute = compute)
     print(f"Corpus embeddings shape: {corpus_embs.shape}")
