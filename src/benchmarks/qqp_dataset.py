@@ -222,14 +222,14 @@ def run_qqp_benchmark(model_name, subset_size=7500, split = "test", target_size=
 
     corpus, queries, targets = None, None, None
     if compute:
-        dataset = load_dataset("quora", split=split, trust_remote_code=True)
-        duplicates = [ex for ex in dataset if ex["is_duplicate"] == 1]
+        dataset = load_dataset("glue", "qqp", split=split, trust_remote_code=True)
+        duplicates = [ex for ex in dataset if ex["label"] == 1]
         shuffle(duplicates)
 
         sampled = randsample(duplicates, subset_size)
-        queries = [ex["questions"]["text"][0] for ex in sampled[:target_size]]
-        targets = [ex["questions"]["text"][1] for ex in sampled[:target_size]]
-        corpus = [ex["questions"]["text"][1] for ex in sampled]
+        queries = [ex["question1"] for ex in sampled[:target_size]]
+        targets = [ex["question2"] for ex in sampled[:target_size]]
+        corpus = [ex["question2"] for ex in sampled]
 
         print("Corpus size:", len(corpus))
 
@@ -294,6 +294,6 @@ def run_qqp_benchmark(model_name, subset_size=7500, split = "test", target_size=
 if __name__ == "__main__":
     model_name = 'all-roberta-large-v1'  # Example model
     # model_name = "google-t5/t5-base"
-    results = run_qqp_benchmark(model_name, split="train", top_k=10, compute = True)  # Adjust split and top_k as needed
+    results = run_qqp_benchmark(model_name, subset_size=1500, split="train", target_size=300, top_k=10, compute = True)  # Adjust split and top_k as needed
     for res in results:
         print_metrics_table(res)
