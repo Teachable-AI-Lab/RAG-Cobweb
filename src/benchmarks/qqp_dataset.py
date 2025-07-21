@@ -18,8 +18,6 @@ from annoy import AnnoyIndex
 import hnswlib
 from functools import partial
 
-import pandas as pd
-
 from src.cobweb.CobwebWrapper import CobwebWrapper
 from src.whitening.pca_ica import PCAICAWhiteningModel as PCAICAWhitening
 from src.whitening.zca import ZCAWhiteningModel as ZCAWhitening
@@ -69,7 +67,7 @@ def load_saved_sentences(targets, model_name, dataset, split, compute = False):
 
 def load_cobweb_model(model_name, corpus, corpus_embs, split, mode):
     cobweb_path = f"models/cobweb_wrappers/{model_name.replace('/', '-')}_{split}_{mode}.json"
-    if os.path.exists(cobweb_path) and False:
+    if os.path.exists(cobweb_path):
         print(f"Loading Cobweb model from {cobweb_path}")
         with open(cobweb_path, 'r') as f:
             cobweb_json = json.load(f)
@@ -89,17 +87,19 @@ def load_pca_ica_model(corpus_embs, model_name, dataset, split):
     else:
         print(f"Computing PCA + ICA model and saving to {pca_ica_path}")
         pca_ica_model = PCAICAWhitening.fit(corpus_embs, pca_dim=pca_dim)
+        # os.mkdir("models/pca_ica/")
         pca_ica_model.save(pca_ica_path)
         return pca_ica_model
 
 def load_zca_model(corpus_embs, model_name, dataset, split):
-    zca_path = f"models/zca/{model_name.replace('/', '-')}_{dataset}_{split}_{'_'.join(str(1024).split('.'))}.pkl"
+    zca_path = f"models/zca/{model_name.replace('/', '-')}_{dataset}_{split}.pkl"
     if os.path.exists(zca_path):
         print(f"Loading ZCA model from {zca_path}")
         return ZCAWhitening.load(zca_path)
     else:
         print(f"Computing ZCA model and saving to {zca_path}")
         zca_model = ZCAWhitening.fit(corpus_embs)
+        # os.mkdir("models/zca/")
         zca_model.save(zca_path)
         return zca_model
 
@@ -234,7 +234,7 @@ def run_qqp_benchmark(model_name, subset_size=7500, split = "test", target_size=
     corpus, queries, targets = None, None, None
     if compute:
         # Load QQP dataset and extract duplicates
-        dataset = load_dataset("glue", "qqp", split="train")
+        dataset = load_dataset("glue", "qqp", split=split)
 
         # Filter duplicates where label == 1
         duplicates = [ex for ex in dataset if ex["label"] == 1]
