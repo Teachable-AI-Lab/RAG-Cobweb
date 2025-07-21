@@ -266,7 +266,8 @@ class CobwebTorchTree(object):
                 break
 
             if hasattr(curr, "sentence_id"):
-                heapq.heappush(retrieved, (score, random(), curr))
+                # heapq.heappush(retrieved, (score, random(), curr))
+                heapq.heappush(retrieved, (len(retrieved), random(), curr))
 
             if retrieve_k is not None and len(retrieved) == retrieve_k:
                 break # TODO can replace this with a part at the end optionally!
@@ -281,9 +282,9 @@ class CobwebTorchTree(object):
                 for i, c in enumerate(curr.children):
                     child_ll = ll_children_unnorm[i] - log_p_of_x + curr_ll
                     child_ll_inst = c.log_prob(instance)
-                    score = child_ll + child_ll_inst # p(c|x) * p(x|c)
-                    # score = child_ll # p(c|x)
-                    heapq.heappush(queue, (-score, -child_ll, random(), c))
+                    child_score = score + child_ll + child_ll_inst
+                    # child_score = child_ll + child_ll_inst # p(c|x) * p(x|c)
+                    heapq.heappush(queue, (-child_score, -child_ll, random(), c))
 
         if retrieve_k is None:
             return best if use_best else curr

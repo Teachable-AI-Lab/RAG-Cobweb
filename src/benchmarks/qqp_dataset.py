@@ -67,7 +67,7 @@ def load_saved_sentences(targets, model_name, dataset, split, compute = False):
 
 def load_cobweb_model(model_name, corpus, corpus_embs, split, mode):
     cobweb_path = f"models/cobweb_wrappers/{model_name.replace('/', '-')}_{split}_{mode}.json"
-    if os.path.exists(cobweb_path):
+    if os.path.exists(cobweb_path) and False:
         print(f"Loading Cobweb model from {cobweb_path}")
         with open(cobweb_path, 'r') as f:
             cobweb_json = json.load(f)
@@ -273,7 +273,7 @@ def run_qqp_benchmark(model_name, subset_size=7500, split = "test", target_size=
 
     # Setup retrieval methods
     results = []
-    save_path = f"outputs/qqp_benchmark_{model_name.replace('/', '-')}_c{subset_size}_t{target_size}_{split}.txt"
+    save_path = f"outputs/qqp_benchmark_{model_name.replace('/', '-')}_c{subset_size}_t{target_size}_{split}_new_scoring_combined.txt"
     print(f"Setting up FAISS...")
     faiss_index = setup_faiss(corpus_embs)
     results.append(evaluate_retrieval("FAISS", queries_embs, targets, lambda q, k: retrieve_faiss(q, k, faiss_index, corpus), top_k))
@@ -282,10 +282,14 @@ def run_qqp_benchmark(model_name, subset_size=7500, split = "test", target_size=
 
     print(f"Setting up Basic Cobweb...")
     cobweb = load_cobweb_model(model_name, corpus, corpus_embs, split, "base")
-    results.append(evaluate_retrieval("Cobweb", queries_embs, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb), top_k))
-    if len(results) < 2:
-        print("ERROR")
-    print(f"--- Basic Cobweb Metrics ---")
+    # for k in get_eval_ks(top_k):
+    #     print(f"Evaluating Cobweb with k={k}...")
+    #     results.append(evaluate_retrieval(f"Cobweb (k={k})", queries_embs, targets, partial(retrieve_cobweb_basic, cobweb=cobweb), k))
+    #     print(f"--- Cobweb (k={k}) Basic Metrics ---")
+    #     print_metrics_table(results[-1], save_path=save_path)
+    print(f"Evaluating Cobweb with k={top_k}...")
+    results.append(evaluate_retrieval("Cobweb Basic", queries_embs, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb), top_k))
+    print(f"--- Cobweb Basic Metrics ---")
     print_metrics_table(results[-1], save_path=save_path)
 
     # results.append(evaluate_retrieval("Cobweb Fast", queries_embs, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb, use_fast=True), top_k))
@@ -300,6 +304,11 @@ def run_qqp_benchmark(model_name, subset_size=7500, split = "test", target_size=
 
     print(f"Setting up PCA + ICA Cobweb...")
     cobweb_pca_ica = load_cobweb_model(model_name, corpus, pca_ica_corpus_embs, split, "pca_ica")
+    # for k in get_eval_ks(top_k).reverse():
+    #     results.append(evaluate_retrieval(f"Cobweb PCA + ICA (k={k})", pca_ica_queries_embs, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb_pca_ica), k))
+    #     print(f"--- Cobweb PCA + ICA Metrics (k={k}) ---")
+    #     print_metrics_table(results[-1], save_path=save_path)
+    print(f"Evaluating Cobweb PCA + ICA with k={top_k}...")
     results.append(evaluate_retrieval("Cobweb PCA + ICA", pca_ica_queries_embs, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb_pca_ica), top_k))
     print(f"--- Cobweb PCA + ICA Metrics ---")
     print_metrics_table(results[-1], save_path=save_path)
@@ -308,11 +317,11 @@ def run_qqp_benchmark(model_name, subset_size=7500, split = "test", target_size=
     # print(f"--- Cobweb PCA + ICA Fast Metrics ---")
     # print_metrics_table(results[-1], save_path=save_path)
 
-    print(f"Setting up ZCA Cobweb...")
-    cobweb_zca = load_cobweb_model(model_name, corpus, zca_corpus_embs, split, "zca")
-    results.append(evaluate_retrieval("Cobweb ZCA", zca_queries_embs, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb_zca), top_k))
-    print(f"--- Cobweb ZCA Metrics ---")
-    print_metrics_table(results[-1], save_path=save_path)
+    # print(f"Setting up ZCA Cobweb...")
+    # cobweb_zca = load_cobweb_model(model_name, corpus, zca_corpus_embs, split, "zca")
+    # results.append(evaluate_retrieval("Cobweb ZCA", zca_queries_embs, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb_zca), top_k))
+    # print(f"--- Cobweb ZCA Metrics ---")
+    # print_metrics_table(results[-1], save_path=save_path)
 
     # results.append(evaluate_retrieval("Cobweb ZCA Fast", pca_ica_queries_embs, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb_pca_ica, use_fast=True), top_k))
     # print(f"--- Cobweb ZCA Fast Metrics ---")
@@ -323,6 +332,6 @@ def run_qqp_benchmark(model_name, subset_size=7500, split = "test", target_size=
 if __name__ == "__main__":
     model_name = 'all-roberta-large-v1'  # Example model
     # model_name = "google-t5/t5-base"
-    results = run_qqp_benchmark(model_name, split="train", top_k=3, compute = True)  # Adjust split and top_k as needed
+    results = run_qqp_benchmark(model_name, split="train", top_k=10, compute = False)  # Adjust split and top_k as needed
     for res in results:
         print_metrics_table(res)
