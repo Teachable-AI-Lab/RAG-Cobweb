@@ -7,8 +7,9 @@ from tqdm import tqdm
 from random import sample as randsample, shuffle
 from tabulate import tabulate
 
-from transformers import DPRQuestionEncoder, DPRContextEncoder, DPRQuestionEncoderTokenizer, DPRContextEncoderTokenizer
+from transformers import DPRQuestionEncoder, DPRContextEncoder, DPRQuestionEncoderTokenizer, DPRContextEncoderTokenizer, AutoTokenizer, T5EncoderModel
 import torch
+from sentence_transformers import SentenceTransformer
 from datasets import load_dataset
 from sklearn.metrics import ndcg_score
 
@@ -25,6 +26,39 @@ def get_embedding_path(model_type: str, model_name: str, dataset: str, split: st
     os.makedirs("data/embeddings", exist_ok=True)
     model_name = model_name.replace('/', '-')
     return f"data/embeddings/{model_type}_{model_name}_{dataset}_{split}.npy"
+
+def get_simple_embedding_path(model_name: str, dataset: str, split: str):
+    os.makedirs("data/embeddings", exist_ok=True)
+    model_name = model_name.replace('/', '-')
+    return f"data/embeddings/{model_name}_{dataset}_{split}.npy"
+
+def load_or_compute_embeddings(texts, model_name, dataset, split, compute=False):
+    """
+    Load or compute embeddings using SentenceTransformer or T5, similar to QQP dataset.
+    """
+    path = get_simple_embedding_path(model_name, dataset, split)
+    if os.path.exists(path) and not compute:
+        print(f"Loading embeddings from {path}")
+        return np.load(path)
+    else:
+        print(f"Computing embeddings and saving to {path}")
+        print(f"texts : {texts[:5]}...")  # Show first 5 texts for debugging
+        if "t5" in model_name:
+            texts = ["Summarize :" + text for text in texts]
+            tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+            model = T5EncoderModel.from_pretrained(model_name, trust_remote_code=True)
+            inputs = tokenizer(texts, return_tensors='pt', padding=True).input_ids
+            with torch.no_grad():
+                outputs = model(input_ids = inputs)
+            embeddings = outputs.last_hidden_state.mean(dim=1).numpy()
+        else:
+            model = SentenceTransformer(model_name, trust_remote_code=True)
+            embeddings = model.encode(texts, convert_to_numpy=True, normalize_embeddings=True)
+        print(f"Computed embeddings shape: {embeddings.shape}")
+        if len(embeddings.shape) != 2:
+            raise ValueError(f"Embeddings for {model_name} should be 2D, got {embeddings.shape}. Check the model and input texts.")
+        np.save(path, embeddings)
+        return embeddings
 
 def load_or_compute_dpr_embeddings(texts, model_type, model_name, dataset, split, compute=False):
     """
@@ -228,15 +262,23 @@ def print_metrics_table(metrics, save_path=None):
 
 # === Main MS Marco Benchmark Runner ===
 
-def run_msmarco_benchmark(dpr_model_name="facebook/dpr-question_encoder-single-nq-base", subset_size=7500, split="validation", target_size=750, top_k=3, compute=True):
-    print(f"\n--- Running MS Marco Benchmark with DPR (TOP_K={top_k}) ---")
+def run_msmarco_benchmark(model_name="facebook/dpr-question_encoder-single-nq-base", subset_size=7500, split="validation", target_size=750, top_k=3, compute=True):
+    print(f"\n--- Running MS Marco Benchmark (TOP_K={top_k}) ---")
     
-    # DPR model names
-    query_model_name = dpr_model_name
-    passage_model_name = dpr_model_name.replace("question_encoder", "ctx_encoder")
+    # Check if this is a DPR model or a general embedding model
+    is_dpr_model = "dpr-" in model_name and ("question_encoder" in model_name or "ctx_encoder" in model_name)
     
-    print(f"Using Query Model: {query_model_name}")
-    print(f"Using Passage Model: {passage_model_name}")
+    if is_dpr_model:
+        print(f"Using DPR model: {model_name}")
+        # DPR model names
+        query_model_name = model_name
+        passage_model_name = model_name.replace("question_encoder", "ctx_encoder")
+        print(f"Using Query Model: {query_model_name}")
+        print(f"Using Passage Model: {passage_model_name}")
+    else:
+        print(f"Using same model for both queries and passages: {model_name}")
+        query_model_name = model_name
+        passage_model_name = model_name
 
     corpus, queries, targets = None, None, None
     if compute:
@@ -268,12 +310,21 @@ def run_msmarco_benchmark(dpr_model_name="facebook/dpr-question_encoder-single-n
         
                 
 
-    # Load or compute embeddings using separate DPR models
-    corpus_embs = load_or_compute_dpr_embeddings(corpus, "passage", passage_model_name, "msmarco_corpus", split, compute=compute)
-    print(f"Corpus embeddings shape: {corpus_embs.shape}")
-    
-    queries_embs = load_or_compute_dpr_embeddings(queries, "query", query_model_name, "msmarco_queries", split, compute=compute)
-    print(f"Queries embeddings shape: {queries_embs.shape}")
+    # Load or compute embeddings
+    if is_dpr_model:
+        # Use separate DPR models for queries and passages
+        corpus_embs = load_or_compute_dpr_embeddings(corpus, "passage", passage_model_name, "msmarco_corpus", split, compute=compute)
+        print(f"Corpus embeddings shape: {corpus_embs.shape}")
+        
+        queries_embs = load_or_compute_dpr_embeddings(queries, "query", query_model_name, "msmarco_queries", split, compute=compute)
+        print(f"Queries embeddings shape: {queries_embs.shape}")
+    else:
+        # Use the same model for both queries and passages
+        corpus_embs = load_or_compute_embeddings(corpus, model_name, "msmarco_corpus", split, compute=compute)
+        print(f"Corpus embeddings shape: {corpus_embs.shape}")
+        
+        queries_embs = load_or_compute_embeddings(queries, model_name, "msmarco_queries", split, compute=compute)
+        print(f"Queries embeddings shape: {queries_embs.shape}")
     
     # Load saved sentences
     targets = load_saved_sentences(targets, query_model_name, "msmarco_targets", split, compute=compute)
@@ -316,7 +367,8 @@ def run_msmarco_benchmark(dpr_model_name="facebook/dpr-question_encoder-single-n
 
     # Setup retrieval methods
     results = []
-    save_path = f"outputs/ms_marco/benchmark_{query_model_name.replace('/', '-')}_c{subset_size}_t{target_size}_{split}_dpr.txt"
+    model_suffix = "dpr" if is_dpr_model else "unified"
+    save_path = f"outputs/ms_marco/benchmark_{query_model_name.replace('/', '-')}_c{subset_size}_t{target_size}_{split}_{model_suffix}.txt"
     
     print(f"Setting up FAISS...")
     faiss_index = setup_faiss(corpus_embs)
@@ -345,7 +397,14 @@ def run_msmarco_benchmark(dpr_model_name="facebook/dpr-question_encoder-single-n
     return results
 
 if __name__ == "__main__":
-    dpr_model_name = 'facebook/dpr-question_encoder-single-nq-base'  # DPR model
-    results = run_msmarco_benchmark(dpr_model_name, split="validation", top_k=10, compute=False)  # Adjust split and top_k as needed
+    # Example with DPR model
+    # dpr_model_name = 'facebook/dpr-question_encoder-single-nq-base'
+    # results = run_msmarco_benchmark(dpr_model_name, split="validation", top_k=10, compute=False)
+    # for res in results:
+    #     print_metrics_table(res)
+    
+    # Example with unified model (like RoBERTa)
+    model_name = 'all-roberta-large-v1'
+    results = run_msmarco_benchmark(model_name, split="validation", top_k=10, compute=True)
     for res in results:
         print_metrics_table(res)
