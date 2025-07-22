@@ -13,7 +13,7 @@
 export PYTHONUNBUFFERED=TRUE
 source ~/.bashrc
 conda activate rag-cobweb
-cd /nethome/agupta886/flash/RAG-Cobweb
+cd /nethome/ksingara3/flash/RAG-Cobweb
 export PYTHONPATH=$(pwd)
 
 srun python src/benchmarks/qqp_dataset.py

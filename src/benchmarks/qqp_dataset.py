@@ -20,6 +20,7 @@ from functools import partial
 
 from src.cobweb.CobwebWrapper import CobwebWrapper
 from src.whitening.pca_ica import PCAICAWhiteningModel as PCAICAWhitening
+from src.whitening.pca_zca import PCAZCAWhiteningModel as PCAZCAWhitening
 from src.whitening.zca import ZCAWhiteningModel as ZCAWhitening
 
 def get_embedding_path(model_name: str, dataset: str, split: str):
@@ -79,7 +80,7 @@ def load_cobweb_model(model_name, corpus, corpus_embs, split, mode):
         return cobweb
 
 def load_pca_ica_model(corpus_embs, model_name, dataset, split):
-    pca_dim=0.96
+    pca_dim = 0.9
     pca_ica_path = f"models/pca_ica/{model_name.replace('/', '-')}_{dataset}_{split}_{'_'.join(str(pca_dim).split('.'))}.pkl"
     if os.path.exists(pca_ica_path):
         print(f"Loading PCA + ICA model from {pca_ica_path}")
@@ -90,6 +91,19 @@ def load_pca_ica_model(corpus_embs, model_name, dataset, split):
         # os.mkdir("models/pca_ica/")
         pca_ica_model.save(pca_ica_path)
         return pca_ica_model
+
+def load_pca_zca_model(corpus_embs, model_name, dataset, split):
+    pca_dim = 0.96
+    pca_zca_path = f"models/pca_zca/{model_name.replace('/', '-')}_{dataset}_{split}_{'_'.join(str(pca_dim).split('.'))}.pkl"
+    if os.path.exists(pca_zca_path):
+        print(f"Loading PCA + ZCA model from {pca_zca_path}")
+        return PCAZCAWhitening.load(pca_zca_path)
+    else:
+        print(f"Computing PCA + ZCA model and saving to {pca_zca_path}")
+        pca_zca_model = PCAZCAWhitening.fit(corpus_embs, pca_dim=pca_dim)
+        # os.mkdir("models/pca_zca/")
+        pca_zca_model.save(pca_zca_path)
+        return pca_zca_model
 
 def load_zca_model(corpus_embs, model_name, dataset, split):
     zca_path = f"models/zca/{model_name.replace('/', '-')}_{dataset}_{split}.pkl"
@@ -151,7 +165,7 @@ def retrieve_hnsw(query_emb, k, index, corpus):
 
 def get_eval_ks(top_k):
     """Return a list of k-values to evaluate based on top_k."""
-    base = [3, 5, 10, 20, 50, 100]
+    base = [2, 3, 5, 10, 20, 50, 100]
     return sorted([k for k in base if k <= top_k])
 
 def evaluate_retrieval(name, queries, targets, retrieve_fn, top_k=10):
@@ -262,13 +276,21 @@ def run_qqp_benchmark(model_name, subset_size=7500, split = "test", target_size=
     pca_ica_queries_embs = pca_ica_model.transform(queries_embs)
     print(f"PCA and ICA embeddings transformation completed.")
 
-    zca_model = load_zca_model(corpus_embs, model_name, "qqp_corpus", split)
-    print(f"ZCA model loaded: {zca_model}")
+    # pca_zca_model = load_pca_zca_model(corpus_embs, model_name, "qqp_corpus", split)
+    # print(f"PCA/ZCA model loaded: {pca_zca_model}")
 
-    print(f"Starting ZCA embeddings transformation...")
-    zca_corpus_embs = zca_model.transform(corpus_embs)
-    zca_queries_embs = zca_model.transform(queries_embs)
-    print(f"ZCA embeddings transformation completed.")
+    # print(f"Starting PCA and ZCA embeddings transformation...")
+    # pca_zca_corpus_embs = pca_zca_model.transform(corpus_embs)
+    # pca_zca_queries_embs = pca_zca_model.transform(queries_embs)
+    # print(f"PCA and ZCA embeddings transformation completed.")
+
+    # zca_model = load_zca_model(corpus_embs, model_name, "qqp_corpus", split)
+    # print(f"ZCA model loaded: {zca_model}")
+
+    # print(f"Starting ZCA embeddings transformation...")
+    # zca_corpus_embs = zca_model.transform(corpus_embs)
+    # zca_queries_embs = zca_model.transform(queries_embs)
+    # print(f"ZCA embeddings transformation completed.")
 
 
     # Setup retrieval methods
@@ -282,39 +304,26 @@ def run_qqp_benchmark(model_name, subset_size=7500, split = "test", target_size=
 
     print(f"Setting up Basic Cobweb...")
     cobweb = load_cobweb_model(model_name, corpus, corpus_embs, split, "base")
-    # for k in get_eval_ks(top_k):
-    #     print(f"Evaluating Cobweb with k={k}...")
-    #     results.append(evaluate_retrieval(f"Cobweb (k={k})", queries_embs, targets, partial(retrieve_cobweb_basic, cobweb=cobweb), k))
-    #     print(f"--- Cobweb (k={k}) Basic Metrics ---")
-    #     print_metrics_table(results[-1], save_path=save_path)
+
     print(f"Evaluating Cobweb with k={top_k}...")
     results.append(evaluate_retrieval("Cobweb Basic", queries_embs, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb), top_k))
     print(f"--- Cobweb Basic Metrics ---")
     print_metrics_table(results[-1], save_path=save_path)
 
-    # results.append(evaluate_retrieval("Cobweb Fast", queries_embs, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb, use_fast=True), top_k))
-    # print(f"--- Cobweb Fast Metrics ---")
-    # print_metrics_table(results[-1], save_path=save_path)
-
-    # print(f"Setting up PCA Cobweb...")
-    # cobweb_pca = load_cobweb_model(model_name, corpus, pca_corpus_embs, split, "pca")
-    # results.append(evaluate_retrieval("Cobweb PCA", pca_queries_embs, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb_pca), top_k))
-    # print(f"--- Cobweb PCA Metrics ---")
-    # print_metrics_table(results[-1], save_path=save_path)
-
     print(f"Setting up PCA + ICA Cobweb...")
     cobweb_pca_ica = load_cobweb_model(model_name, corpus, pca_ica_corpus_embs, split, "pca_ica")
-    # for k in get_eval_ks(top_k).reverse():
-    #     results.append(evaluate_retrieval(f"Cobweb PCA + ICA (k={k})", pca_ica_queries_embs, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb_pca_ica), k))
-    #     print(f"--- Cobweb PCA + ICA Metrics (k={k}) ---")
-    #     print_metrics_table(results[-1], save_path=save_path)
+
     print(f"Evaluating Cobweb PCA + ICA with k={top_k}...")
     results.append(evaluate_retrieval("Cobweb PCA + ICA", pca_ica, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb_pca_ica), top_k))
     print(f"--- Cobweb PCA + ICA Metrics ---")
     print_metrics_table(results[-1], save_path=save_path)
 
-    # results.append(evaluate_retrieval("Cobweb ZCA Fast", pca_ica_queries_embs, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb_pca_ica, use_fast=True), top_k))
-    # print(f"--- Cobweb PCA + ICA Fast Metrics ---")
+    # print(f"Setting up PCA + ZCA Cobweb...")
+    # cobweb_pca_zca = load_cobweb_model(model_name, corpus, pca_zca_corpus_embs, split, "pca_zca")
+
+    # print(f"Evaluating Cobweb PCA + ZCA with k={top_k}...")
+    # results.append(evaluate_retrieval("Cobweb PCA + ZCA", pca_zca_queries_embs, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb_pca_zca), top_k))
+    # print(f"--- Cobweb PCA + ZCA Metrics ---")
     # print_metrics_table(results[-1], save_path=save_path)
 
     # print(f"Setting up ZCA Cobweb...")
@@ -323,15 +332,11 @@ def run_qqp_benchmark(model_name, subset_size=7500, split = "test", target_size=
     # print(f"--- Cobweb ZCA Metrics ---")
     # print_metrics_table(results[-1], save_path=save_path)
 
-    # results.append(evaluate_retrieval("Cobweb ZCA Fast", pca_ica_queries_embs, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb_pca_ica, use_fast=True), top_k))
-    # print(f"--- Cobweb ZCA Fast Metrics ---")
-    # print_metrics_table(results[-1], save_path=save_path)
-
     return results
 
 if __name__ == "__main__":
     model_name = 'all-roberta-large-v1'  # Example model
     # model_name = "google-t5/t5-base"
-    results = run_qqp_benchmark(model_name, split="train", top_k=10, compute = False)  # Adjust split and top_k as needed
+    results = run_qqp_benchmark(model_name, split="train", top_k=5, compute = True)  # Adjust split and top_k as needed
     for res in results:
         print_metrics_table(res)
