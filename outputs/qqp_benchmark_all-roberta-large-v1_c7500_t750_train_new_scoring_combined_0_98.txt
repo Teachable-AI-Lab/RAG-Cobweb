@@ -1,6 +1,6 @@
 
 --- Metrics for FAISS ---
-Avg Latency: 1.47 ms with total time 1.11 seconds
+Avg Latency: 1.61 ms with total time 1.2 seconds
 +-----+--------+--------+--------+
 |  k  | Recall |  MRR   |  nDCG  |
 +-----+--------+--------+--------+
@@ -10,21 +10,21 @@ Avg Latency: 1.47 ms with total time 1.11 seconds
 +-----+--------+--------+--------+
 
 --- Metrics for Cobweb Basic ---
-Avg Latency: 9.93 ms with total time 7.45 seconds
+Avg Latency: 9.74 ms with total time 7.3 seconds
 +-----+--------+--------+--------+
 |  k  | Recall |  MRR   |  nDCG  |
 +-----+--------+--------+--------+
 | @3  | 0.2373 | 0.2024 | 0.2111 |
-| @5  | 0.2613 | 0.2079 | 0.2182 |
-| @10 | 0.3213 | 0.2161 | 0.2341 |
+| @5  | 0.2613 | 0.2079 | 0.2181 |
+| @10 | 0.3213 | 0.2161 | 0.2339 |
 +-----+--------+--------+--------+
 
 --- Metrics for Cobweb PCA + ICA ---
-Avg Latency: 1714.84 ms with total time 1286.13 seconds
+Avg Latency: 1743.44 ms with total time 1307.58 seconds
 +-----+--------+--------+--------+
 |  k  | Recall |  MRR   |  nDCG  |
 +-----+--------+--------+--------+
-| @3  | 0.8293 | 0.7429 | 0.7623 |
-| @5  | 0.876  | 0.7532 | 0.7737 |
-| @10 | 0.9373 | 0.7614 | 0.7809 |
+| @3  | 0.8187 | 0.7351 | 0.7542 |
+| @5  | 0.8773 | 0.7484 | 0.7722 |
+| @10 | 0.9253 | 0.7549 | 0.7724 |
 +-----+--------+--------+--------+

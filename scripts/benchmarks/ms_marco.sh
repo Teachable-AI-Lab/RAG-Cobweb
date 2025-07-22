@@ -1,8 +1,8 @@
 #!/bin/bash
-#SBATCH --job-name=benchmark_qqp
+#SBATCH --job-name=benchmark_ms_marco
 #SBATCH --time=02:30:00
-#SBATCH --output=/nethome/agupta886/flash/slurm_outputs/qqp_benchmark0_98.out
-#SBATCH --error=/nethome/agupta886/flash/slurm_errors/qqp_benchmark0_98.err
+#SBATCH --output=/nethome/agupta886/flash/slurm_outputs/ms_marco.out
+#SBATCH --error=/nethome/agupta886/flash/slurm_errors/ms_marco.err
 #SBATCH --partition="tail-lab"
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
@@ -16,4 +16,4 @@ conda activate rag-cobweb
 cd /nethome/agupta886/flash/RAG-Cobweb
 export PYTHONPATH=$(pwd)
 
-srun python src/benchmarks/qqp_dataset.py
+srun python src/benchmarks/ms_marco_dataset.py

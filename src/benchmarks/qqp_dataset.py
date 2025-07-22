@@ -273,7 +273,7 @@ def run_qqp_benchmark(model_name, subset_size=7500, split = "test", target_size=
 
     # Setup retrieval methods
     results = []
-    save_path = f"outputs/qqp_benchmark_{model_name.replace('/', '-')}_c{subset_size}_t{target_size}_{split}_new_scoring_combined.txt"
+    save_path = f"outputs/qqp_benchmark_{model_name.replace('/', '-')}_c{subset_size}_t{target_size}_{split}_new_scoring.txt"
     print(f"Setting up FAISS...")
     faiss_index = setup_faiss(corpus_embs)
     results.append(evaluate_retrieval("FAISS", queries_embs, targets, lambda q, k: retrieve_faiss(q, k, faiss_index, corpus), top_k))
@@ -309,7 +309,7 @@ def run_qqp_benchmark(model_name, subset_size=7500, split = "test", target_size=
     #     print(f"--- Cobweb PCA + ICA Metrics (k={k}) ---")
     #     print_metrics_table(results[-1], save_path=save_path)
     print(f"Evaluating Cobweb PCA + ICA with k={top_k}...")
-    results.append(evaluate_retrieval("Cobweb PCA + ICA", pca_ica_queries_embs, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb_pca_ica), top_k))
+    results.append(evaluate_retrieval("Cobweb PCA + ICA", pca_ica, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb_pca_ica), top_k))
     print(f"--- Cobweb PCA + ICA Metrics ---")
     print_metrics_table(results[-1], save_path=save_path)
 
