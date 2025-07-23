@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --job-name=run_experiments
 #SBATCH --time=00:30:00
-#SBATCH --output=/nethome/agupta886/flash/slurm_outputs/run_experiments.out
-#SBATCH --error=/nethome/agupta886/flash/slurm_errors/run_experiments.err
+#SBATCH --output=/nethome/$USER/flash/slurm_outputs/run_experiments.out
+#SBATCH --error=/nethome/$USER/flash/slurm_errors/run_experiments.err
 #SBATCH --partition="tail-lab"
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
@@ -14,7 +14,7 @@
 export PYTHONUNBUFFERED=TRUE
 source ~/.bashrc
 conda activate rag-cobweb
-cd /nethome/agupta886/flash/RAG-Cobweb
+cd /nethome/$USER/flash/RAG-Cobweb
 export PYTHONPATH=$(pwd)
 
 echo "Starting experiment runner at $(date)"

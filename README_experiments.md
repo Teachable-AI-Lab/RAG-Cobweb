@@ -29,7 +29,7 @@ sbatch scripts/benchmarks/qqp.sh
 sbatch scripts/benchmarks/qqp.sh configs/benchmarks/qqp_t5.json
 
 # Run with command line arguments (no config file)
-sbatch --wrap "cd /nethome/agupta886/flash/RAG-Cobweb && python src/benchmarks/qqp_dataset.py --model_name google-t5/t5-base --top_k 5"
+sbatch --wrap "cd /nethome/$USER/flash/RAG-Cobweb && python src/benchmarks/qqp_dataset.py --model_name google-t5/t5-base --top_k 5"
 ```
 
 ### Option 3: Direct Python Execution
@@ -121,7 +121,7 @@ squeue -u $USER
 squeue -j job_id1,job_id2
 
 # Check job output in real time
-tail -f /nethome/agupta886/flash/slurm_outputs/job_name.out
+tail -f /nethome/$USER/flash/slurm_outputs/job_name.out
 ```
 
 ## Adding New Experiments

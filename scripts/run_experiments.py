@@ -45,8 +45,8 @@ def create_slurm_script(experiment, config, base_dir):
     # Create SLURM script content
     script_content = f"""#!/bin/bash
 #SBATCH --job-name={exp_name}
-#SBATCH --output=/nethome/agupta886/flash/slurm_outputs/{exp_name}.out
-#SBATCH --error=/nethome/agupta886/flash/slurm_errors/{exp_name}.err
+#SBATCH --output=/nethome/$USER/flash/slurm_outputs/{exp_name}.out
+#SBATCH --error=/nethome/$USER/flash/slurm_errors/{exp_name}.err
 """
     
     # Add SLURM options

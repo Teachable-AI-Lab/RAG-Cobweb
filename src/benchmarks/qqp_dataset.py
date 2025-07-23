@@ -48,7 +48,7 @@ def run_qqp_benchmark(model_name, subset_size=7500, split="validation", target_s
     targets = load_or_save_sentences(targets, model_name, "qqp_targets", split, compute=compute, unique_id=unique_id)
     corpus = load_or_save_sentences(corpus, model_name, "qqp_corpus", split, compute=compute, unique_id=unique_id)
 
-    pca_ica_model = load_pca_ica_model(corpus_embs, model_name, "qqp_corpus", split, "general", target_dim=0.9, unique_id=unique_id)
+    pca_ica_model = load_pca_ica_model(corpus_embs, model_name, "qqp_corpus", split, "general", target_dim=0.995, unique_id=unique_id)
     print(f"PCA/ICA model loaded: {pca_ica_model}")
 
     print(f"Starting PCA and ICA embeddings transformation...")
