@@ -48,13 +48,21 @@ def run_qqp_benchmark(model_name, subset_size=7500, split="validation", target_s
     targets = load_or_save_sentences(targets, model_name, "qqp_targets", split, compute=compute, unique_id=unique_id)
     corpus = load_or_save_sentences(corpus, model_name, "qqp_corpus", split, compute=compute, unique_id=unique_id)
 
-    pca_ica_model = load_pca_ica_model(corpus_embs, model_name, "qqp_corpus", split, "general", target_dim=0.995, unique_id=unique_id)
+    pca_ica_model = load_pca_ica_model(corpus_embs, model_name, "qqp_corpus", split, "general", target_dim=0.9, unique_id=unique_id)
     print(f"PCA/ICA model loaded: {pca_ica_model}")
 
     print(f"Starting PCA and ICA embeddings transformation...")
     pca_ica_corpus_embs = pca_ica_model.transform(corpus_embs)
     pca_ica_queries_embs = pca_ica_model.transform(queries_embs)
     print(f"PCA and ICA embeddings transformation completed.")
+
+    just_ica_model = load_pca_ica_model(corpus_embs, model_name, "qqp_corpus", split, "general", target_dim=0.9999, unique_id=unique_id)
+    print(f"Just ICA model loaded: {just_ica_model}")
+
+    print(f"Starting Just ICA embeddings transformation...")
+    just_ica_corpus_embs = just_ica_model.transform(corpus_embs)
+    just_ica_queries_embs = just_ica_model.transform(queries_embs)
+    print(f"Just ICA embeddings transformation completed.")
 
     # Setup retrieval methods
     results = []
@@ -86,6 +94,14 @@ def run_qqp_benchmark(model_name, subset_size=7500, split="validation", target_s
     print(f"Evaluating Cobweb PCA + ICA")
     results.append(evaluate_retrieval("Cobweb PCA + ICA", pca_ica_queries_embs, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb_pca_ica), top_k))
     print(f"--- Cobweb PCA + ICA Metrics ---")
+    print_metrics_table(results[-1], save_path=save_path)
+
+    print(f"Setting up Just ICA Cobweb...")
+    cobweb_just_ica = load_cobweb_model(model_name, corpus, just_ica_corpus_embs, split, "just_ica", unique_id=unique_id)
+
+    print(f"Evaluating Cobweb Just ICA")
+    results.append(evaluate_retrieval("Cobweb Just ICA", just_ica_queries_embs, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb_just_ica), top_k))
+    print(f"--- Cobweb Just ICA Metrics ---")
     print_metrics_table(results[-1], save_path=save_path)
 
     return results

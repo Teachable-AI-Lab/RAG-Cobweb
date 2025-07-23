@@ -2,8 +2,8 @@
 #SBATCH --job-name=benchmark_ms_marco
 #SBATCH --time=03:00:00
 #SBATCH --mem=24G
-#SBATCH --output=/nethome/$USER/flash/slurm_outputs/ms_marco.out
-#SBATCH --error=/nethome/$USER/flash/slurm_errors/ms_marco.err
+#SBATCH --output=slurm_outputs/ms_marco.out
+#SBATCH --error=slurm_errors/ms_marco.err
 #SBATCH --partition="tail-lab"
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
@@ -14,7 +14,7 @@
 export PYTHONUNBUFFERED=TRUE
 source ~/.bashrc
 conda activate rag-cobweb
-cd /nethome/$USER/flash/RAG-Cobweb
+cd ~/flash/RAG-Cobweb
 export PYTHONPATH=$(pwd)
 
 # Default arguments - can be overridden by command line arguments

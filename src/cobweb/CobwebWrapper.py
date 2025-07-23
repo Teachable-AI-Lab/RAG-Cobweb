@@ -165,6 +165,27 @@ class CobwebWrapper:
         print("\nCobweb Sentence Clustering Tree:")
         _print_node(self.tree.root)
 
+    def print_relevant_subtrees(self):
+        """
+        Recursively prints the tree structure.
+        """
+        def _print_node(node, depth=0):
+            indent = "  " * depth
+            label = f"Sentence ID: {getattr(node, 'sentence_id', 'N/A')}"
+            print(f"{indent}- Node ID {node.id} {label}")
+            sid = getattr(node, "sentence_id", None)
+            if sid is not None and sid < len(self.sentences):
+                sentence = self.sentences[sid]
+                if sentence is not None:
+                    print(f"{indent}    \"{sentence}\"")
+                else:
+                    print(f"{indent}    [Embedding only]")
+            for child in getattr(node, "children", []):
+                _print_node(child, depth + 1)
+
+        print("\nCobweb Sentence Clustering Tree:")
+        _print_node(self.tree.root)
+
     def dump_json(self, save_path=None):
         """
         Serializes the CobwebWrapper into a JSON string.

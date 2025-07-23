@@ -12,7 +12,7 @@ from pathlib import Path
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Run multiple benchmark experiments")
-    parser.add_argument("--config", type=str, default="configs/experiments.json", 
+    parser.add_argument("--config", type=str, default="configs/experiments_qqp.json", 
                        help="Path to experiments configuration file")
     parser.add_argument("--experiment", type=str, nargs="+", 
                        help="Specific experiment names to run (run all if not specified)")
@@ -45,8 +45,8 @@ def create_slurm_script(experiment, config, base_dir):
     # Create SLURM script content
     script_content = f"""#!/bin/bash
 #SBATCH --job-name={exp_name}
-#SBATCH --output=/nethome/$USER/flash/slurm_outputs/{exp_name}.out
-#SBATCH --error=/nethome/$USER/flash/slurm_errors/{exp_name}.err
+#SBATCH --output=/slurm_outputs/{exp_name}.out
+#SBATCH --error=/slurm_errors/{exp_name}.err
 """
     
     # Add SLURM options
