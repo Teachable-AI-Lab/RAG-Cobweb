@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=benchmark_qqp
-#SBATCH --time=02:30:00
+#SBATCH --time=05:30:00
 #SBATCH --mem=16G
 #SBATCH --output=slurm_outputs/qqp_benchmark.out
 #SBATCH --error=slurm_errors/qqp_benchmark.err
