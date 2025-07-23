@@ -1,8 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name=benchmark_qqp
 #SBATCH --time=02:30:00
-#SBATCH --output=/nethome/agupta886/flash/slurm_outputs/qqp_benchmark0_98.out
-#SBATCH --error=/nethome/agupta886/flash/slurm_errors/qqp_benchmark0_98.err
+#SBATCH --mem=16G
+#SBATCH --output=/nethome/agupta886/flash/slurm_outputs/qqp_benchmark.out
+#SBATCH --error=/nethome/agupta886/flash/slurm_errors/qqp_benchmark.err
 #SBATCH --partition="tail-lab"
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
@@ -13,7 +14,15 @@
 export PYTHONUNBUFFERED=TRUE
 source ~/.bashrc
 conda activate rag-cobweb
-cd /nethome/ksingara3/flash/RAG-Cobweb
+cd /nethome/agupta886/flash/RAG-Cobweb
 export PYTHONPATH=$(pwd)
 
-srun python src/benchmarks/qqp_dataset.py
+# Default arguments - can be overridden by command line arguments
+CONFIG_FILE=${1:-"configs/benchmarks/qqp_default.json"}
+
+echo "Starting QQP benchmark at $(date)"
+echo "Using config: $CONFIG_FILE"
+
+srun python src/benchmarks/qqp_dataset.py --config "$CONFIG_FILE"
+
+echo "QQP benchmark completed at $(date)"

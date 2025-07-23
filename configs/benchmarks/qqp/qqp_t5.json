@@ -1,0 +1,8 @@
+{
+    "model_name": "google-t5/t5-base",
+    "subset_size": 7500,
+    "split": "validation",
+    "target_size": 1000,
+    "top_k": 10,
+    "compute": true
+}

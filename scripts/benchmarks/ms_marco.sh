@@ -1,6 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=benchmark_ms_marco
-#SBATCH --time=02:30:00
+#SBATCH --time=03:00:00
+#SBATCH --mem=24G
 #SBATCH --output=/nethome/agupta886/flash/slurm_outputs/ms_marco.out
 #SBATCH --error=/nethome/agupta886/flash/slurm_errors/ms_marco.err
 #SBATCH --partition="tail-lab"
@@ -16,4 +17,12 @@ conda activate rag-cobweb
 cd /nethome/agupta886/flash/RAG-Cobweb
 export PYTHONPATH=$(pwd)
 
-srun python src/benchmarks/ms_marco_dataset.py
+# Default arguments - can be overridden by command line arguments
+CONFIG_FILE=${1:-"configs/benchmarks/ms_marco_default.json"}
+
+echo "Starting MS Marco benchmark at $(date)"
+echo "Using config: $CONFIG_FILE"
+
+srun python src/benchmarks/ms_marco_dataset.py --config "$CONFIG_FILE"
+
+echo "MS Marco benchmark completed at $(date)"

@@ -1,249 +1,29 @@
 import os
-import numpy as np
-import time
+import argparse
 import json
-import hashlib
-from tqdm import tqdm
+import numpy as np
 from random import sample as randsample, shuffle
-from tabulate import tabulate
-
-from transformers import AutoTokenizer
-import torch
-from sentence_transformers import SentenceTransformer
 from datasets import load_dataset
-from sklearn.metrics import ndcg_score
 
-import faiss
-from annoy import AnnoyIndex
-import hnswlib
-from functools import partial
-
-from src.cobweb.CobwebWrapper import CobwebWrapper
-from src.whitening.pca_ica import PCAICAWhiteningModel as PCAICAWhitening
-from src.whitening.pca_zca import PCAZCAWhiteningModel as PCAZCAWhitening
-from src.whitening.zca import ZCAWhiteningModel as ZCAWhitening
-
-def get_embedding_path(model_name: str, dataset: str, split: str):
-    os.makedirs("data/embeddings", exist_ok=True)
-    model_name = model_name.replace('/', '-')
-    return f"data/embeddings/{model_name}_{dataset}_{split}.npy"
-
-def load_or_compute_embeddings(texts, model_name, dataset, split, compute = False):
-    path = get_embedding_path(model_name, dataset, split)
-    if os.path.exists(path) and not compute:
-        print(f"Loading embeddings from {path}")
-        return np.load(path)
-    else:
-        print(f"Computing embeddings and saving to {path}")
-        print(f"texts : {texts[:5]}...")  # Show first 5 texts for debugging
-        if "t5" in model_name:
-            texts = ["Summarize :" + text for text in texts]
-            tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-            model = T5EncoderModel.from_pretrained(model_name, trust_remote_code=True)
-            inputs = tokenizer(texts, return_tensors='pt', padding=True).input_ids
-            with torch.no_grad():
-                outputs = model(input_ids = inputs)
-            embeddings = outputs.last_hidden_state.mean(dim=1).numpy()
-        else:
-            model = SentenceTransformer(model_name, trust_remote_code=True)
-            embeddings = model.encode(texts, convert_to_numpy=True, normalize_embeddings=True)
-        print(f"Computed embeddings shape: {embeddings.shape}")
-        if len(embeddings.shape) != 2:
-            raise ValueError(f"Embeddings for {model_name} should be 2D, got {embeddings.shape}. Check the model and input texts.")
-        np.save(path, embeddings)
-        return embeddings
-
-def load_saved_sentences(targets, model_name, dataset, split, compute = False):
-    path = f"data/sentences/{model_name.replace('/', '-')}_{dataset}_{split}.json"
-    if targets is None:
-        print(f"Loading sentences from {path}")
-        with open(path, 'r') as f:
-            return f.readlines()
-    else:
-        print(f"Saving sentences to {path}")
-        with open(path, 'w+') as f:
-            f.write('\n'.join(targets))
-        return targets
+from src.utils.benchmark_utils import (
+    generate_unique_id, load_or_compute_embeddings, load_or_save_sentences,
+    load_cobweb_model, load_pca_ica_model, setup_faiss, retrieve_faiss,
+    retrieve_cobweb_basic, evaluate_retrieval, print_metrics_table, get_results_path
+)
 
 
-def load_cobweb_model(model_name, corpus, corpus_embs, split, mode):
-    cobweb_path = f"models/cobweb_wrappers/{model_name.replace('/', '-')}_{split}_{mode}.json"
-    if os.path.exists(cobweb_path) and False:
-        print(f"Loading Cobweb model from {cobweb_path}")
-        with open(cobweb_path, 'r') as f:
-            cobweb_json = json.load(f)
-        return CobwebWrapper.load_json(cobweb_json, encode_func=lambda x: x)
-    else:
-        print(f"Computing Cobweb model and saving to {cobweb_path}")
-        cobweb = CobwebWrapper(corpus=corpus, corpus_embeddings=corpus_embs, encode_func=lambda x: x)
-        cobweb.dump_json(cobweb_path)
-        return cobweb
+def run_qqp_benchmark(model_name, subset_size=7500, split="validation", target_size=750, top_k=3, compute=True):
+    print(f"--- Running QQP Benchmark (TOP_K={top_k}) ---")
 
-def load_pca_ica_model(corpus_embs, model_name, dataset, split):
-    pca_dim = 0.9
-    pca_ica_path = f"models/pca_ica/{model_name.replace('/', '-')}_{dataset}_{split}_{'_'.join(str(pca_dim).split('.'))}.pkl"
-    if os.path.exists(pca_ica_path):
-        print(f"Loading PCA + ICA model from {pca_ica_path}")
-        return PCAICAWhitening.load(pca_ica_path)
-    else:
-        print(f"Computing PCA + ICA model and saving to {pca_ica_path}")
-        pca_ica_model = PCAICAWhitening.fit(corpus_embs, pca_dim=pca_dim)
-        # os.mkdir("models/pca_ica/")
-        pca_ica_model.save(pca_ica_path)
-        return pca_ica_model
-
-def load_pca_zca_model(corpus_embs, model_name, dataset, split):
-    pca_dim = 0.96
-    pca_zca_path = f"models/pca_zca/{model_name.replace('/', '-')}_{dataset}_{split}_{'_'.join(str(pca_dim).split('.'))}.pkl"
-    if os.path.exists(pca_zca_path):
-        print(f"Loading PCA + ZCA model from {pca_zca_path}")
-        return PCAZCAWhitening.load(pca_zca_path)
-    else:
-        print(f"Computing PCA + ZCA model and saving to {pca_zca_path}")
-        pca_zca_model = PCAZCAWhitening.fit(corpus_embs, pca_dim=pca_dim)
-        # os.mkdir("models/pca_zca/")
-        pca_zca_model.save(pca_zca_path)
-        return pca_zca_model
-
-def load_zca_model(corpus_embs, model_name, dataset, split):
-    zca_path = f"models/zca/{model_name.replace('/', '-')}_{dataset}_{split}.pkl"
-    if os.path.exists(zca_path):
-        print(f"Loading ZCA model from {zca_path}")
-        return ZCAWhitening.load(zca_path)
-    else:
-        print(f"Computing ZCA model and saving to {zca_path}")
-        zca_model = ZCAWhitening.fit(corpus_embs)
-        # os.mkdir("models/zca/")
-        zca_model.save(zca_path)
-        return zca_model
-
-def setup_cobweb_basic(corpus, corpus_embs):
-    cobweb = CobwebWrapper(corpus = corpus, corpus_embeddings=corpus_embs, encode_func=lambda x: x)
-    return cobweb
-
-def retrieve_cobweb_basic(query_emb, k, cobweb, use_fast=False):
-    if use_fast:
-        return cobweb.cobweb_predict_fast(query_emb, k)
-    else:
-        return cobweb.cobweb_predict(query_emb, k)
-    
-def setup_faiss(corpus_embs):
-    dim = corpus_embs.shape[1]
-    index = faiss.IndexFlatIP(dim)
-    index.add(corpus_embs)
-    return index
-
-def retrieve_faiss(query_emb, k, index, corpus):
-    _, ids = index.search(np.expand_dims(query_emb, axis=0), k)
-    return [corpus[i] for i in ids[0]]
-
-def setup_annoy(corpus_embs):
-    dim = corpus_embs.shape[1]
-    index = AnnoyIndex(dim, 'angular')
-    for i, emb in enumerate(corpus_embs):
-        index.add_item(i, emb)
-    index.build(10)
-    return index
-
-def retrieve_annoy(query_emb, k, index, corpus):
-    ids = index.get_nns_by_vector(query_emb, k)
-    return [corpus[i] for i in ids]
-
-def setup_hnsw(corpus_embs):
-    dim = corpus_embs.shape[1]
-    index = hnswlib.Index(space='cosine', dim=dim)
-    index.init_index(max_elements=len(corpus_embs), ef_construction=100, M=16)
-    index.add_items(corpus_embs, np.arange(len(corpus_embs)))
-    index.set_ef(50)
-    return index
-
-def retrieve_hnsw(query_emb, k, index, corpus):
-    ids, _ = index.knn_query(query_emb, k=k)
-    return [corpus[i] for i in ids[0]]
-
-# === Evaluation Function ===
-
-def get_eval_ks(top_k):
-    """Return a list of k-values to evaluate based on top_k."""
-    base = [2, 3, 5, 10, 20, 50, 100]
-    return sorted([k for k in base if k <= top_k])
-
-def evaluate_retrieval(name, queries, targets, retrieve_fn, top_k=10):
-    ks = get_eval_ks(top_k)
-    metrics = {
-        f"recall@{k}": 0 for k in ks
-    }
-    metrics.update({
-        f"mrr@{k}": 0 for k in ks
-    })
-    metrics.update({
-        f"ndcg@{k}": 0 for k in ks
-    })
-
-    latencies = []
-
-    for query, target in tqdm(zip(queries, targets), total=len(queries), desc=f"Evaluating {name}"):
-        start = time.time()
-        retrieved = retrieve_fn(query, top_k)
-        latencies.append(time.time() - start)
-
-        for k in ks:
-            top_k_results = retrieved[:k]
-            if target in top_k_results:
-                metrics[f"recall@{k}"] += 1
-                rank = top_k_results.index(target) + 1
-                metrics[f"mrr@{k}"] += 1 / rank
-            relevance = [1 if doc == target else 0 for doc in top_k_results]
-            if sum(relevance) > 0:
-                ideal = sorted(relevance, reverse=True)
-                ndcg = ndcg_score([ideal], [relevance])
-                metrics[f"ndcg@{k}"] += ndcg
-
-    n = len(queries)
-    for k in ks:
-        metrics[f"recall@{k}"] = round(metrics[f"recall@{k}"] / n, 4)
-        metrics[f"mrr@{k}"] = round(metrics[f"mrr@{k}"] / n, 4)
-        metrics[f"ndcg@{k}"] = round(metrics[f"ndcg@{k}"] / n, 4)
-    
-    metrics["time_taken"] = round(np.sum(latencies), 2)
-    metrics["method"] = name
-    metrics["avg_latency_ms"] = round(1000 * np.mean(latencies), 2)
-
-    return metrics
-
-def print_metrics_table(metrics, save_path=None):
-    method = metrics.pop("method", "Unknown")
-    latency = metrics.pop("avg_latency_ms", None)
-    total_time = metrics.pop("time_taken", 0)
-
-    rows = []
-    ks = sorted(set(int(k.split('@')[1]) for k in metrics if '@' in k))
-    for k in ks:
-        row = [
-            f"@{k}",
-            metrics.get(f"recall@{k}", 0),
-            metrics.get(f"mrr@{k}", 0),
-            metrics.get(f"ndcg@{k}", 0)
-        ]
-        rows.append(row)
-
-    table_str = f"\n--- Metrics for {method} ---\n"
-    if latency is not None:
-        table_str += f"Avg Latency: {latency} ms with total time {total_time} seconds\n"
-    table_str += tabulate(rows, headers=["k", "Recall", "MRR", "nDCG"], tablefmt="pretty")
-
-    print(table_str)
-
-    if save_path:
-        with open(save_path, "a+") as f: 
-            f.write(table_str + "\n")
-
-
-
-# === Main Benchmark Runner ===
-
-def run_qqp_benchmark(model_name, subset_size=7500, split = "test", target_size=750, top_k=3, compute = True):
-    print(f"\n--- Running QQP Benchmark (TOP_K={top_k}) ---")
+    # Generate unique identifier for this run
+    unique_id = generate_unique_id(
+        model_name=model_name,
+        dataset="qqp",
+        split=split,
+        subset_size=subset_size,
+        target_size=target_size
+    )
+    print(f"Run ID: {unique_id}")
 
     corpus, queries, targets = None, None, None
     if compute:
@@ -261,14 +41,14 @@ def run_qqp_benchmark(model_name, subset_size=7500, split = "test", target_size=
 
         print("Length of Corpus:", len(corpus))
 
-    corpus_embs = load_or_compute_embeddings(corpus, model_name, "qqp_corpus", split, compute = compute)
+    corpus_embs = load_or_compute_embeddings(corpus, model_name, "qqp_corpus", split, compute=compute, unique_id=unique_id)
     print(f"Corpus embeddings shape: {corpus_embs.shape}")
-    queries_embs = load_or_compute_embeddings(queries, model_name, "qqp_queries", split, compute = compute)
+    queries_embs = load_or_compute_embeddings(queries, model_name, "qqp_queries", split, compute=compute, unique_id=unique_id)
     print(f"Queries embeddings shape: {queries_embs.shape}")
-    targets = load_saved_sentences(targets, model_name, "qqp_targets", split, compute = compute)
-    corpus = load_saved_sentences(corpus, model_name, "qqp_corpus", split, compute = compute)
+    targets = load_or_save_sentences(targets, model_name, "qqp_targets", split, compute=compute, unique_id=unique_id)
+    corpus = load_or_save_sentences(corpus, model_name, "qqp_corpus", split, compute=compute, unique_id=unique_id)
 
-    pca_ica_model = load_pca_ica_model(corpus_embs, model_name, "qqp_corpus", split)
+    pca_ica_model = load_pca_ica_model(corpus_embs, model_name, "qqp_corpus", split, "general", target_dim=0.9, unique_id=unique_id)
     print(f"PCA/ICA model loaded: {pca_ica_model}")
 
     print(f"Starting PCA and ICA embeddings transformation...")
@@ -276,67 +56,84 @@ def run_qqp_benchmark(model_name, subset_size=7500, split = "test", target_size=
     pca_ica_queries_embs = pca_ica_model.transform(queries_embs)
     print(f"PCA and ICA embeddings transformation completed.")
 
-    # pca_zca_model = load_pca_zca_model(corpus_embs, model_name, "qqp_corpus", split)
-    # print(f"PCA/ZCA model loaded: {pca_zca_model}")
-
-    # print(f"Starting PCA and ZCA embeddings transformation...")
-    # pca_zca_corpus_embs = pca_zca_model.transform(corpus_embs)
-    # pca_zca_queries_embs = pca_zca_model.transform(queries_embs)
-    # print(f"PCA and ZCA embeddings transformation completed.")
-
-    # zca_model = load_zca_model(corpus_embs, model_name, "qqp_corpus", split)
-    # print(f"ZCA model loaded: {zca_model}")
-
-    # print(f"Starting ZCA embeddings transformation...")
-    # zca_corpus_embs = zca_model.transform(corpus_embs)
-    # zca_queries_embs = zca_model.transform(queries_embs)
-    # print(f"ZCA embeddings transformation completed.")
-
-
     # Setup retrieval methods
     results = []
-    save_path = f"outputs/qqp_benchmark_{model_name.replace('/', '-')}_c{subset_size}_t{target_size}_{split}_new_scoring.txt"
+    save_path = get_results_path(model_name, "qqp", split, unique_id)
+    
     print(f"Setting up FAISS...")
     faiss_index = setup_faiss(corpus_embs)
     results.append(evaluate_retrieval("FAISS", queries_embs, targets, lambda q, k: retrieve_faiss(q, k, faiss_index, corpus), top_k))
     print(f"--- FAISS Metrics ---")
     print_metrics_table(results[-1], save_path=save_path)
 
-    print(f"Setting up Basic Cobweb...")
-    cobweb = load_cobweb_model(model_name, corpus, corpus_embs, split, "base")
+    print(f"Setting up FAISS with PCA + ICA...")
+    faiss_pca_ica_index = setup_faiss(pca_ica_corpus_embs)
+    results.append(evaluate_retrieval("FAISS PCA + ICA", pca_ica_queries_embs, targets, lambda q, k: retrieve_faiss(q, k, faiss_pca_ica_index, corpus), top_k))
+    print(f"--- FAISS PCA + ICA Metrics ---")
+    print_metrics_table(results[-1], save_path=save_path)
 
-    print(f"Evaluating Cobweb with k={top_k}...")
+    print(f"Setting up Basic Cobweb...")
+    cobweb = load_cobweb_model(model_name, corpus, corpus_embs, split, "base", unique_id=unique_id)
+
+    print(f"Evaluating Cobweb Basic")
     results.append(evaluate_retrieval("Cobweb Basic", queries_embs, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb), top_k))
     print(f"--- Cobweb Basic Metrics ---")
     print_metrics_table(results[-1], save_path=save_path)
 
     print(f"Setting up PCA + ICA Cobweb...")
-    cobweb_pca_ica = load_cobweb_model(model_name, corpus, pca_ica_corpus_embs, split, "pca_ica")
+    cobweb_pca_ica = load_cobweb_model(model_name, corpus, pca_ica_corpus_embs, split, "pca_ica", unique_id=unique_id)
 
-    print(f"Evaluating Cobweb PCA + ICA with k={top_k}...")
-    results.append(evaluate_retrieval("Cobweb PCA + ICA", pca_ica, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb_pca_ica), top_k))
+    print(f"Evaluating Cobweb PCA + ICA")
+    results.append(evaluate_retrieval("Cobweb PCA + ICA", pca_ica_queries_embs, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb_pca_ica), top_k))
     print(f"--- Cobweb PCA + ICA Metrics ---")
     print_metrics_table(results[-1], save_path=save_path)
 
-    # print(f"Setting up PCA + ZCA Cobweb...")
-    # cobweb_pca_zca = load_cobweb_model(model_name, corpus, pca_zca_corpus_embs, split, "pca_zca")
-
-    # print(f"Evaluating Cobweb PCA + ZCA with k={top_k}...")
-    # results.append(evaluate_retrieval("Cobweb PCA + ZCA", pca_zca_queries_embs, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb_pca_zca), top_k))
-    # print(f"--- Cobweb PCA + ZCA Metrics ---")
-    # print_metrics_table(results[-1], save_path=save_path)
-
-    # print(f"Setting up ZCA Cobweb...")
-    # cobweb_zca = load_cobweb_model(model_name, corpus, zca_corpus_embs, split, "zca")
-    # results.append(evaluate_retrieval("Cobweb ZCA", zca_queries_embs, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb_zca), top_k))
-    # print(f"--- Cobweb ZCA Metrics ---")
-    # print_metrics_table(results[-1], save_path=save_path)
-
     return results
 
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Run QQP Benchmark with configurable parameters")
+    parser.add_argument("--config", type=str, help="Path to JSON config file")
+    parser.add_argument("--model_name", type=str, default="all-roberta-large-v1", help="Model name for embeddings")
+    parser.add_argument("--subset_size", type=int, default=7500, help="Size of the corpus subset")
+    parser.add_argument("--split", type=str, default="validation", help="Dataset split to use")
+    parser.add_argument("--target_size", type=int, default=750, help="Number of query-target pairs")
+    parser.add_argument("--top_k", type=int, default=3, help="Top-k for retrieval evaluation")
+    parser.add_argument("--compute", action="store_true", default=True, help="Whether to compute embeddings")
+    parser.add_argument("--no_compute", action="store_true", help="Skip computing embeddings")
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    model_name = 'all-roberta-large-v1'  # Example model
-    # model_name = "google-t5/t5-base"
-    results = run_qqp_benchmark(model_name, split="train", top_k=5, compute = True)  # Adjust split and top_k as needed
+    args = parse_args()
+    
+    # Handle config file if provided
+    if args.config:
+        with open(args.config, 'r') as f:
+            config = json.load(f)
+        # Override args with config values
+        for key, value in config.items():
+            if hasattr(args, key):
+                setattr(args, key, value)
+    
+    # Handle compute flag
+    compute = args.compute and not args.no_compute
+    
+    print(f"Running QQP benchmark with:")
+    print(f"  Model: {args.model_name}")
+    print(f"  Subset size: {args.subset_size}")
+    print(f"  Split: {args.split}")
+    print(f"  Target size: {args.target_size}")
+    print(f"  Top-k: {args.top_k}")
+    print(f"  Compute: {compute}")
+    
+    results = run_qqp_benchmark(
+        model_name=args.model_name,
+        subset_size=args.subset_size,
+        split=args.split,
+        target_size=args.target_size,
+        top_k=args.top_k,
+        compute=compute
+    )
     for res in results:
         print_metrics_table(res)

@@ -1,0 +1,43 @@
+{
+    "experiments": [
+        {
+            "name": "ms_marco_roberta_default",
+            "dataset": "ms_marco",
+            "config": "configs/benchmarks/ms_marco/ms_marco_default.json",
+            "slurm_options": {
+                "time": "03:00:00",
+                "mem": "32G",
+                "cpus_per_task": 6
+            }
+        },
+        {
+            "name": "ms_marco_roberta_large",
+            "dataset": "ms_marco",
+            "config": "configs/benchmarks/ms_marco/ms_marco_large.json",
+            "slurm_options": {
+                "time": "04:00:00",
+                "mem": "40G",
+                "cpus_per_task": 8
+            }
+        },
+        {
+            "name": "ms_marco_dpr",
+            "dataset": "ms_marco",  
+            "config": "configs/benchmarks/ms_marco/ms_marco_dpr.json",
+            "slurm_options": {
+                "time": "02:30:00",
+                "mem": "24G",
+                "cpus_per_task": 4
+            }
+        }
+    ],
+    "default_slurm_options": {
+        "partition": "tail-lab",
+        "nodes": 1,
+        "ntasks_per_node": 1,
+        "cpus_per_task": 4,
+        "mem": "16G",
+        "qos": "short",
+        "exclude": "clippy"
+    }
+}
