@@ -1,3 +1,10 @@
+"""
+Script to visualize the finalized Cobweb tree. 
+
+We'll use an extremely small subset of QQP (1000 samples) to instantiate a Cobweb tree
+and then find base-level subtrees (extending to roughly one parent) to visualize.
+"""
+
 import os
 import argparse
 import json
@@ -10,7 +17,6 @@ from src.utils.benchmark_utils import (
     load_cobweb_model, load_pca_ica_model, setup_faiss, retrieve_faiss,
     retrieve_cobweb_basic, evaluate_retrieval, print_metrics_table, get_results_path
 )
-
 
 def run_qqp_benchmark(model_name, subset_size=7500, split="validation", target_size=750, top_k=3, compute=True):
     print(f"--- Running QQP Benchmark (TOP_K={top_k}) ---")
@@ -48,7 +54,7 @@ def run_qqp_benchmark(model_name, subset_size=7500, split="validation", target_s
     targets = load_or_save_sentences(targets, model_name, "qqp_targets", split, compute=compute, unique_id=unique_id)
     corpus = load_or_save_sentences(corpus, model_name, "qqp_corpus", split, compute=compute, unique_id=unique_id)
 
-    pca_ica_model = load_pca_ica_model(corpus_embs, model_name, "qqp_corpus", split, "general", target_dim=0.9, unique_id=unique_id)
+    pca_ica_model = load_pca_ica_model(corpus_embs, model_name, "qqp_corpus", split, "general", target_dim=0.90, unique_id=unique_id)
     print(f"PCA/ICA model loaded: {pca_ica_model}")
 
     print(f"Starting PCA and ICA embeddings transformation...")
@@ -59,26 +65,6 @@ def run_qqp_benchmark(model_name, subset_size=7500, split="validation", target_s
     # Setup retrieval methods
     results = []
     save_path = get_results_path(model_name, "qqp", split, unique_id)
-    
-    print(f"Setting up FAISS...")
-    faiss_index = setup_faiss(corpus_embs)
-    results.append(evaluate_retrieval("FAISS", queries_embs, targets, lambda q, k: retrieve_faiss(q, k, faiss_index, corpus), top_k))
-    print(f"--- FAISS Metrics ---")
-    print_metrics_table(results[-1], save_path=save_path)
-
-    print(f"Setting up FAISS with PCA + ICA...")
-    faiss_pca_ica_index = setup_faiss(pca_ica_corpus_embs)
-    results.append(evaluate_retrieval("FAISS PCA + ICA", pca_ica_queries_embs, targets, lambda q, k: retrieve_faiss(q, k, faiss_pca_ica_index, corpus), top_k))
-    print(f"--- FAISS PCA + ICA Metrics ---")
-    print_metrics_table(results[-1], save_path=save_path)
-
-    print(f"Setting up Basic Cobweb...")
-    cobweb = load_cobweb_model(model_name, corpus, corpus_embs, split, "base", unique_id=unique_id)
-
-    print(f"Evaluating Cobweb Basic")
-    results.append(evaluate_retrieval("Cobweb Basic", queries_embs, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb), top_k))
-    print(f"--- Cobweb Basic Metrics ---")
-    print_metrics_table(results[-1], save_path=save_path)
 
     print(f"Setting up PCA + ICA Cobweb...")
     cobweb_pca_ica = load_cobweb_model(model_name, corpus, pca_ica_corpus_embs, split, "pca_ica", unique_id=unique_id)
@@ -87,6 +73,8 @@ def run_qqp_benchmark(model_name, subset_size=7500, split="validation", target_s
     results.append(evaluate_retrieval("Cobweb PCA + ICA", pca_ica_queries_embs, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb_pca_ica), top_k))
     print(f"--- Cobweb PCA + ICA Metrics ---")
     print_metrics_table(results[-1], save_path=save_path)
+
+    cobweb_pca_ica.visualize_subtrees("outputs/visualizations")
 
     return results
 

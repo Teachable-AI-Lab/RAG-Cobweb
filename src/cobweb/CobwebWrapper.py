@@ -3,6 +3,9 @@ import json
 import math
 from src.cobweb.CobwebTorchTree import CobwebTorchTree
 from tqdm import tqdm
+import os
+import hashlib
+from graphviz import Digraph
 
 class CobwebWrapper:
     def __init__(self, corpus=None, corpus_embeddings=None, encode_func=lambda x: x):
@@ -165,27 +168,6 @@ class CobwebWrapper:
         print("\nCobweb Sentence Clustering Tree:")
         _print_node(self.tree.root)
 
-    def print_relevant_subtrees(self):
-        """
-        Recursively prints the tree structure.
-        """
-        def _print_node(node, depth=0):
-            indent = "  " * depth
-            label = f"Sentence ID: {getattr(node, 'sentence_id', 'N/A')}"
-            print(f"{indent}- Node ID {node.id} {label}")
-            sid = getattr(node, "sentence_id", None)
-            if sid is not None and sid < len(self.sentences):
-                sentence = self.sentences[sid]
-                if sentence is not None:
-                    print(f"{indent}    \"{sentence}\"")
-                else:
-                    print(f"{indent}    [Embedding only]")
-            for child in getattr(node, "children", []):
-                _print_node(child, depth + 1)
-
-        print("\nCobweb Sentence Clustering Tree:")
-        _print_node(self.tree.root)
-
     def dump_json(self, save_path=None):
         """
         Serializes the CobwebWrapper into a JSON string.
@@ -244,7 +226,7 @@ class CobwebWrapper:
 
         _index_nodes(wrapper.tree.root, sentence_to_node)
         wrapper.sentence_to_node = sentence_to_node
-        wrapper.print_tree()
+        # wrapper.print_tree()
 
         return wrapper
 
@@ -253,3 +235,89 @@ class CobwebWrapper:
         Returns the number of sentences in the Cobweb tree.
         """
         return len(self.sentences)
+
+    def _visualize_grandparent_tree(self, tree_root, sentences, output_dir="grandparent_trees"):
+        os.makedirs(output_dir, exist_ok=True)
+
+        node_counter = {"id": 0}
+
+        def next_id():
+            node_counter["id"] += 1
+            return f"n{node_counter['id']}"
+
+        def get_sentence_label(sid):
+            if sid is not None and sid < len(sentences):
+                sentence = sentences[sid]
+                if sentence:
+                    return sentence
+            return None  # Treat as "embedding only"
+
+        def is_grandparent(node):
+            return any(getattr(child, "children", []) for child in getattr(node, "children", []))
+
+        def get_filename_for_grandparent(node):
+            sid = getattr(node, "sentence_id", None)
+            if sid is not None and sid < len(sentences):
+                sentence = sentences[sid]
+                if sentence:
+                    short_hash = hashlib.sha1(sentence.encode()).hexdigest()[:8]
+                    return f"gp_{sid}_{short_hash}.png"
+            return f"gp_node_{getattr(node, 'id', 'unknown')}"
+
+        def process_subtree(grandparent_node):
+            dot = Digraph(comment="Grandparent Subtree", format='png')
+            dot.attr(rankdir='TB')
+            dot.attr('edge', color='lightblue')
+
+            local_counter = {"id": 0}
+            def local_next_id():
+                local_counter["id"] += 1
+                return f"n{local_counter['id']}"
+
+            # Grandparent node: unlabeled, larger light blue circle
+            gp_node_id = local_next_id()
+            dot.node(
+                gp_node_id,
+                "",  # no label
+                shape='circle',
+                width='0.5',      # bigger than parents
+                style='filled',
+                color='lightblue'
+            )
+
+            for parent in getattr(grandparent_node, "children", []):
+                parent_id = local_next_id()
+                dot.node(parent_id, "", shape='circle', width='0.25', style='filled', color='#666666')  # darker grey
+                dot.edge(gp_node_id, parent_id)
+
+                for leaf in getattr(parent, "children", []):
+                    sid = getattr(leaf, "sentence_id", None)
+                    label = get_sentence_label(sid)
+                    leaf_id = local_next_id()
+                    if label:
+                        dot.node(leaf_id, label, shape='box', style='filled', color='lightgrey')
+                    else:
+                        dot.node(leaf_id, "", shape='circle', width='0.2', style='filled', color='black')
+                    dot.edge(parent_id, leaf_id)
+
+            filename = get_filename_for_grandparent(grandparent_node)
+            filepath = os.path.join(output_dir, filename)
+            dot.render(filepath, cleanup=True)
+            print(f"Saved: {filepath}")
+
+
+        def collect_grandparents(node):
+            result = []
+            if is_grandparent(node):
+                result.append(node)
+            for child in getattr(node, "children", []):
+                result.extend(collect_grandparents(child))
+            return result
+
+        grandparents = collect_grandparents(tree_root)
+        for gp in grandparents:
+            process_subtree(gp)
+
+
+    def visualize_subtrees(self, directory):
+        self._visualize_grandparent_tree(self.tree.root, self.sentences, directory)

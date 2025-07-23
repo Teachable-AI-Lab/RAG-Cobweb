@@ -1,9 +1,9 @@
 #!/bin/bash
-#SBATCH --job-name=benchmark_qqp
-#SBATCH --time=05:30:00
+#SBATCH --job-name=visualize_qqp
+#SBATCH --time=00:30:00
 #SBATCH --mem=16G
-#SBATCH --output=slurm_outputs/qqp_benchmark.out
-#SBATCH --error=slurm_errors/qqp_benchmark.err
+#SBATCH --output=slurm_outputs/qqp_visualize.out
+#SBATCH --error=slurm_errors/qqp_visualize.err
 #SBATCH --partition="tail-lab"
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
@@ -18,11 +18,11 @@ cd ~/flash/RAG-Cobweb
 export PYTHONPATH=$(pwd)
 
 # Default arguments - can be overridden by command line arguments
-CONFIG_FILE=${1:-"configs/benchmarks/qqp/qqp_default.json"}
+CONFIG_FILE=${1:-"configs/benchmarks/qqp/qqp_visualize.json"}
 
 echo "Starting QQP benchmark at $(date)"
 echo "Using config: $CONFIG_FILE"
 
-srun python src/benchmarks/qqp_dataset.py --config "$CONFIG_FILE"
+srun python src/benchmarks/visualize_qqp.py --config "$CONFIG_FILE"
 
-echo "QQP benchmark completed at $(date)"
+echo "Visualize QQP script completed at $(date)"
