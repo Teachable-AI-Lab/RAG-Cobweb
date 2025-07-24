@@ -13,7 +13,7 @@ from tabulate import tabulate
 from typing import List, Dict, Any, Tuple, Optional, Callable
 
 from transformers import (
-    AutoTokenizer, T5EncoderModel,
+    AutoTokenizer, T5EncoderModel, AutoModel,
     DPRQuestionEncoder, DPRContextEncoder, 
     DPRQuestionEncoderTokenizer, DPRContextEncoderTokenizer
 )
@@ -29,6 +29,55 @@ from src.cobweb.CobwebWrapper import CobwebWrapper
 from src.whitening.pca_ica import PCAICAWhiteningModel as PCAICAWhitening
 from src.whitening.pca_zca import PCAZCAWhiteningModel as PCAZCAWhitening
 from src.whitening.zca import ZCAWhiteningModel as ZCAWhitening
+
+
+# Model type mapping dictionary
+MODEL_TYPE_MAPPING = {
+    # Sentence Transformers
+    "all-roberta-large-v1": {"type": "sentence_transformer"},
+    "gtr-t5-large": {"type": "sentence_transformer"},
+    
+    # T5 models
+    "google/t5-base": {"type": "transformer", "model_class": T5EncoderModel, "pooling": "mean"},
+    
+    # BERT models
+    "bert-base-uncased": {"type": "transformer", "model_class": AutoModel, "pooling": "cls"},
+    "bert-large-uncased": {"type": "transformer", "model_class": AutoModel, "pooling": "cls"},
+
+    # GPT2 models
+    "openai-community/gpt2": {"type": "transformer", "model_class": AutoModel, "pooling": "mean", "add_pad_token": True},
+}
+
+
+def get_model_config(model_name: str) -> dict:
+    """
+    Get model configuration based on the model name.
+    
+    Args:
+        model_name: Name of the model
+        
+    Returns:
+        Model configuration dictionary
+    """
+    # Check exact matches first
+    if model_name in MODEL_TYPE_MAPPING:
+        return MODEL_TYPE_MAPPING[model_name]
+    
+    # Check partial matches for common patterns - order matters!
+    model_lower = model_name.lower()
+    
+    # Check for more specific patterns first to avoid false matches
+    if "roberta" in model_lower or "gtr" in model_lower:
+        return {"type": "sentence_transformer"}
+    elif "t5" in model_lower and "gtr" not in model_lower:  # Exclude gtr-t5 models
+        return {"type": "transformer", "model_class": T5EncoderModel, "pooling": "mean"}
+    elif "bert" in model_lower and "roberta" not in model_lower:  # Exclude roberta models
+        return {"type": "transformer", "model_class": AutoModel, "pooling": "cls"}
+    elif "gpt2" in model_lower:
+        return {"type": "transformer", "model_class": AutoModel, "pooling": "mean", "add_pad_token": True}
+    else:
+        # Default to sentence transformer for unknown models
+        return {"type": "sentence_transformer"}
 
 
 def generate_unique_id(model_name: str, dataset: str, split: str, subset_size: int, 
@@ -147,7 +196,7 @@ def get_results_path(model_name: str, dataset: str, split: str, unique_id: str) 
 def load_or_compute_embeddings(texts: List[str], model_name: str, dataset: str, split: str, 
                              compute: bool = False, unique_id: Optional[str] = None) -> np.ndarray:
     """
-    Load or compute embeddings using SentenceTransformer or T5.
+    Load or compute embeddings using different model types.
     
     Args:
         texts: List of texts to encode
@@ -165,29 +214,51 @@ def load_or_compute_embeddings(texts: List[str], model_name: str, dataset: str, 
     if os.path.exists(path) and not compute:
         print(f"Loading embeddings from {path}")
         return np.load(path)
-    else:
-        print(f"Computing embeddings and saving to {path}")
-        print(f"texts : {texts[:5]}...")  # Show first 5 texts for debugging
+    
+    print(f"Computing embeddings and saving to {path}")
+    print(f"texts : {texts[:5]}...")  # Show first 5 texts for debugging
+    
+    model_config = get_model_config(model_name)
+    print(f"Using model config: {model_config} for model: {model_name}")
+    if model_config["type"] == "transformer":
+        tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
         
-        if "t5" in model_name:
-            # Add task prefix for T5
-            texts = ["Summarize: " + text for text in texts]
-            tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-            model = T5EncoderModel.from_pretrained(model_name, trust_remote_code=True)
-            inputs = tokenizer(texts, return_tensors='pt', padding=True, truncation=True, max_length=512).input_ids
-            with torch.no_grad():
-                outputs = model(input_ids=inputs)
-            embeddings = outputs.last_hidden_state.mean(dim=1).numpy()
+        # Handle GPT2 pad token
+        if model_config.get("add_pad_token", False) and tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+            
+        model_class = model_config["model_class"]
+        model = model_class.from_pretrained(model_name, trust_remote_code=True, output_hidden_states=True)
+        model.eval()
+        inputs = tokenizer(texts, return_tensors='pt', padding=True, truncation=True, max_length=512)
+        with torch.no_grad():
+            outputs = model(**inputs)
+        
+        # Apply pooling strategy
+        pooling = model_config["pooling"]
+        if pooling == "cls":
+            last_hidden = outputs.hidden_states[-1]
+            embeddings = last_hidden[:, 0, :].numpy()  # CLS token
+        elif pooling == "mean":
+            last_hidden = outputs.hidden_states[-1]
+            mask = inputs['attention_mask'].unsqueeze(-1).expand(last_hidden.size()).float()
+            sum_hidden = (last_hidden * mask).sum(dim=1)
+            divisor = mask.sum(dim=1).clamp(min=1e-9)
+            embeddings = (sum_hidden / divisor).cpu().numpy()
         else:
-            model = SentenceTransformer(model_name, trust_remote_code=True)
-            embeddings = model.encode(texts, convert_to_numpy=True, normalize_embeddings=True)
-        
-        print(f"Computed embeddings shape: {embeddings.shape}")
-        if len(embeddings.shape) != 2:
-            raise ValueError(f"Embeddings for {model_name} should be 2D, got {embeddings.shape}. Check the model and input texts.")
-        
-        np.save(path, embeddings)
-        return embeddings
+            raise ValueError(f"Unknown pooling strategy: {pooling}")
+            
+    else:
+        # print(f"Unknown model type {model_config['type']}, falling back to SentenceTransformer")
+        model = SentenceTransformer(model_name, trust_remote_code=True)
+        embeddings = model.encode(texts, convert_to_numpy=True, normalize_embeddings=True)
+    
+    print(f"Computed embeddings shape: {embeddings.shape}")
+    if len(embeddings.shape) != 2:
+        raise ValueError(f"Embeddings for {model_name} should be 2D, got {embeddings.shape}. Check the model and input texts.")
+    
+    np.save(path, embeddings)
+    return embeddings
 
 
 def load_or_compute_dpr_embeddings(texts: List[str], model_type: str, model_name: str, 
