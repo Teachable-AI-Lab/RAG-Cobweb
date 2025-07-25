@@ -240,12 +240,29 @@ class CobwebWrapper:
 
         os.makedirs(output_dir, exist_ok=True)
 
-        def get_sentence_label(sid):
+        def get_sentence_label(sid, max_len=250, wrap=40):
             if sid is not None and sid < len(sentences):
                 sentence = sentences[sid]
                 if sentence:
-                    return sentence
-            return None  # Treat as "embedding only"
+                    needs_ellipsis = len(sentence) > max_len
+                    truncated = sentence[:max_len].rstrip()
+                    if needs_ellipsis:
+                        truncated += "..."
+                    # Wrap at word boundaries every ~wrap characters
+                    words = truncated.split()
+                    lines = []
+                    current_line = ""
+                    for word in words:
+                        if len(current_line) + len(word) + 1 > wrap:
+                            lines.append(current_line)
+                            current_line = word
+                        else:
+                            current_line += (" " if current_line else "") + word
+                    if current_line:
+                        lines.append(current_line)
+                    return "\n".join(lines)
+            return None
+
 
         def is_leaf_with_sentence(node):
             sid = getattr(node, "sentence_id", None)

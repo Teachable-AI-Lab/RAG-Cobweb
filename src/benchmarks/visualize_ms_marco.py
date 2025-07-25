@@ -98,24 +98,14 @@ def run_msmarco_benchmark(model_name="facebook/dpr-question_encoder-single-nq-ba
     # Setup retrieval methods
     results = []
     save_path = get_results_path(query_model_name, "ms_marco", split, unique_id)
-    
-    print(f"Setting up FAISS...")
-    faiss_index = setup_faiss(corpus_embs)
-    results.append(evaluate_retrieval("FAISS", queries_embs, targets, lambda q, k: retrieve_faiss(q, k, faiss_index, corpus), top_k))
-    print(f"--- FAISS Metrics ---")
-    print_metrics_table(results[-1], save_path=save_path)
-
-    print(f"Setting up Basic Cobweb...")
-    cobweb = load_cobweb_model(query_model_name, corpus, corpus_embs, split, "base", unique_id=unique_id)
-    results.append(evaluate_retrieval("Cobweb Basic", queries_embs, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb), top_k))
-    print(f"--- Cobweb Basic Metrics ---")
-    print_metrics_table(results[-1], save_path=save_path)
 
     print(f"Setting up PCA + ICA Cobweb...")
     cobweb_pca_ica = load_cobweb_model(query_model_name, corpus, pca_ica_corpus_embs, split, "pca_ica", unique_id=unique_id)
     results.append(evaluate_retrieval("Cobweb PCA + ICA", pca_ica_queries_embs, targets, lambda q, k: retrieve_cobweb_basic(q, k, cobweb_pca_ica), top_k))
     print(f"--- Cobweb PCA + ICA Metrics ---")
     print_metrics_table(results[-1], save_path=save_path)
+
+    cobweb_pca_ica.visualize_subtrees("outputs/visualizations_ms_marco")
 
     return results
 
