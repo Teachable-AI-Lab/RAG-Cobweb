@@ -237,13 +237,8 @@ class CobwebWrapper:
         return len(self.sentences)
 
     def _visualize_grandparent_tree(self, tree_root, sentences, output_dir="grandparent_trees"):
+
         os.makedirs(output_dir, exist_ok=True)
-
-        node_counter = {"id": 0}
-
-        def next_id():
-            node_counter["id"] += 1
-            return f"n{node_counter['id']}"
 
         def get_sentence_label(sid):
             if sid is not None and sid < len(sentences):
@@ -252,71 +247,106 @@ class CobwebWrapper:
                     return sentence
             return None  # Treat as "embedding only"
 
-        def is_grandparent(node):
-            return any(getattr(child, "children", []) for child in getattr(node, "children", []))
+        def is_leaf_with_sentence(node):
+            sid = getattr(node, "sentence_id", None)
+            return get_sentence_label(sid) is not None
 
-        def get_filename_for_grandparent(node):
+        def is_grandparent(node):
+            # A grandparent is a node whose children have children (i.e., grandchildren exist)
+            return any(
+                child and getattr(child, "children", None)
+                for child in getattr(node, "children", [])
+            )
+
+        def collect_grandparents(node):
+            result = []
+            if is_grandparent(node):
+                # Only include this grandparent if it has leaf descendants with valid sentences
+                valid_leaf_count = sum(
+                    is_leaf_with_sentence(leaf)
+                    for child in getattr(node, "children", [])
+                    for leaf in getattr(child, "children", [])
+                )
+                if valid_leaf_count > 0:
+                    result.append(node)
+            for child in getattr(node, "children", []):
+                result.extend(collect_grandparents(child))
+            return result
+
+        def get_filename_for_grandparent(node, index=0):
             sid = getattr(node, "sentence_id", None)
             if sid is not None and sid < len(sentences):
                 sentence = sentences[sid]
                 if sentence:
                     short_hash = hashlib.sha1(sentence.encode()).hexdigest()[:8]
-                    return f"gp_{sid}_{short_hash}.png"
-            return f"gp_node_{getattr(node, 'id', 'unknown')}"
+                    return f"gp_{sid}_{short_hash}_{index}.png"
+            return f"gp_node_{getattr(node, 'id', 'unknown')}_{index}.png"
 
         def process_subtree(grandparent_node):
-            dot = Digraph(comment="Grandparent Subtree", format='png')
-            dot.attr(rankdir='TB')
-            dot.attr('edge', color='lightblue')
+            all_leaves = []
+            parent_map = {}
 
-            local_counter = {"id": 0}
-            def local_next_id():
-                local_counter["id"] += 1
-                return f"n{local_counter['id']}"
-
-            # Grandparent node: unlabeled, larger light blue circle
-            gp_node_id = local_next_id()
-            dot.node(
-                gp_node_id,
-                "",  # no label
-                shape='circle',
-                width='0.5',      # bigger than parents
-                style='filled',
-                color='lightblue'
-            )
-
+            # First collect only parents/leaves with valid sentences
             for parent in getattr(grandparent_node, "children", []):
-                parent_id = local_next_id()
-                dot.node(parent_id, "", shape='circle', width='0.25', style='filled', color='#666666')  # darker grey
-                dot.edge(gp_node_id, parent_id)
+                valid_leaves = [leaf for leaf in getattr(parent, "children", []) if is_leaf_with_sentence(leaf)]
+                if valid_leaves:
+                    parent_map[parent] = valid_leaves
+                    all_leaves.extend(valid_leaves)
 
-                for leaf in getattr(parent, "children", []):
-                    sid = getattr(leaf, "sentence_id", None)
-                    label = get_sentence_label(sid)
-                    leaf_id = local_next_id()
-                    if label:
+            if not all_leaves:
+                return  # No valid subtree to render
+
+            # Split leaves into batches of 6
+            leaf_batches = [all_leaves[i:i + 6] for i in range(0, len(all_leaves), 6)]
+
+            for batch_index, batch in enumerate(leaf_batches):
+                dot = Digraph(comment="Grandparent Subtree", format='png')
+                dot.attr(rankdir='TB')
+                dot.attr('edge', color='lightblue')
+
+                node_ids = {}
+                local_counter = {"id": 0}
+
+                def local_next_id():
+                    local_counter["id"] += 1
+                    return f"n{local_counter['id']}"
+
+                # Grandparent node
+                gp_node_id = local_next_id()
+                node_ids[grandparent_node] = gp_node_id
+                dot.node(gp_node_id, "", shape='circle', width='0.5', style='filled', color='lightblue')
+
+                # Include only relevant parents and children
+                for parent, leaves in parent_map.items():
+                    # Only include this parent if it has leaves in current batch
+                    filtered_leaves = [leaf for leaf in leaves if leaf in batch]
+                    if not filtered_leaves:
+                        continue
+
+                    parent_id = local_next_id()
+                    node_ids[parent] = parent_id
+                    dot.node(parent_id, "", shape='circle', width='0.25', style='filled', color='#666666')
+                    dot.edge(gp_node_id, parent_id)
+
+                    for leaf in filtered_leaves:
+                        sid = getattr(leaf, "sentence_id", None)
+                        label = get_sentence_label(sid)
+                        if not label:
+                            continue  # already filtered, but double-check
+
+                        leaf_id = local_next_id()
                         dot.node(leaf_id, label, shape='box', style='filled', color='lightgrey')
-                    else:
-                        dot.node(leaf_id, "", shape='circle', width='0.2', style='filled', color='black')
-                    dot.edge(parent_id, leaf_id)
+                        dot.edge(parent_id, leaf_id)
 
-            filename = get_filename_for_grandparent(grandparent_node)
-            filepath = os.path.join(output_dir, filename)
-            dot.render(filepath, cleanup=True)
-            print(f"Saved: {filepath}")
-
-
-        def collect_grandparents(node):
-            result = []
-            if is_grandparent(node):
-                result.append(node)
-            for child in getattr(node, "children", []):
-                result.extend(collect_grandparents(child))
-            return result
+                filename = get_filename_for_grandparent(grandparent_node, batch_index)
+                filepath = os.path.join(output_dir, filename)
+                dot.render(filepath, cleanup=True)
+                print(f"Saved: {filepath}")
 
         grandparents = collect_grandparents(tree_root)
         for gp in grandparents:
             process_subtree(gp)
+
 
 
     def visualize_subtrees(self, directory):
