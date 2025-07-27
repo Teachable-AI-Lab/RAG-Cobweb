@@ -1,5 +1,5 @@
 {
-    "model_name": "google-t5/t5-base",
+    "model_name": "bert-base-uncased",
     "subset_size": 7500,
     "split": "validation",
     "target_size": 1000,

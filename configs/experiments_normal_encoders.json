@@ -1,0 +1,43 @@
+{
+    "experiments": [
+        {
+            "name": "qqp_gpt",
+            "dataset": "qqp",
+            "config": "configs/benchmarks/qqp/qqp_gpt.json",
+            "slurm_options": {
+                "time": "02:30:00",
+                "mem": "16G",
+                "cpus_per_task": 2
+            }
+        },
+        {
+            "name": "qqp_bert",
+            "dataset": "qqp",
+            "config": "configs/benchmarks/qqp/qqp_bert.json",
+            "slurm_options": {
+                "time": "02:30:00",
+                "mem": "16G",
+                "cpus_per_task": 2
+            }
+        },
+        {
+            "name": "qqp_t5",
+            "dataset": "qqp",
+            "config": "configs/benchmarks/qqp/qqp_t5.json",
+            "slurm_options": {
+                "time": "02:30:00",
+                "mem": "16G",
+                "cpus_per_task": 2
+            }
+        }
+    ],
+    "default_slurm_options": {
+        "partition": "tail-lab",
+        "nodes": 1,
+        "ntasks_per_node": 1,
+        "cpus_per_task": 2,
+        "mem": "16G",
+        "qos": "short",
+        "exclude": "clippy"
+    }
+}

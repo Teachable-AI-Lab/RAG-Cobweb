@@ -352,7 +352,7 @@ def load_or_save_sentences(sentences: Optional[List[str]], model_name: str, data
 
 def load_cobweb_model(model_name: str, corpus: List[str], corpus_embs: np.ndarray, 
                      split: str, mode: str, unique_id: Optional[str] = None, 
-                     force_compute: bool = False) -> CobwebWrapper:
+                     force_compute: bool = True) -> CobwebWrapper:
     """
     Load or create a Cobweb model.
     
@@ -376,14 +376,14 @@ def load_cobweb_model(model_name: str, corpus: List[str], corpus_embs: np.ndarra
             cobweb_json = json.load(f)
         return CobwebWrapper.load_json(cobweb_json, encode_func=lambda x: x)
     else:
-        print(f"Computing Cobweb model and saving to {cobweb_path}")
+        # print(f"Computing Cobweb model and saving to {cobweb_path}")
         cobweb = CobwebWrapper(corpus=corpus, corpus_embeddings=corpus_embs, encode_func=lambda x: x)
         cobweb.dump_json(cobweb_path)
         return cobweb
 
 
 def load_pca_ica_model(corpus_embs: np.ndarray, model_name: str, dataset: str, split: str, 
-                      model_type: str, target_dim: float = 0.96, unique_id: Optional[str] = None) -> PCAICAWhitening:
+                      model_type: str, target_dim: float = 0.96, unique_id: Optional[str] = None, compute: bool = False) -> PCAICAWhitening:
     """
     Load or create a PCA + ICA whitening model.
     
@@ -403,7 +403,7 @@ def load_pca_ica_model(corpus_embs: np.ndarray, model_name: str, dataset: str, s
     mode = f"{model_type}_{dim_str}"
     pca_ica_path = get_model_path(model_name, split, mode, 'pca_ica', unique_id)
     
-    if os.path.exists(pca_ica_path):
+    if os.path.exists(pca_ica_path) and not compute:
         print(f"Loading PCA + ICA model for {model_type} from {pca_ica_path}")
         return PCAICAWhitening.load(pca_ica_path)
     else:
@@ -448,10 +448,15 @@ def setup_cobweb_basic(corpus: List[str], corpus_embs: np.ndarray) -> CobwebWrap
     return CobwebWrapper(corpus=corpus, corpus_embeddings=corpus_embs, encode_func=lambda x: x)
 
 
-def setup_faiss(corpus_embs: np.ndarray) -> faiss.IndexFlatIP:
+def setup_faiss(corpus_embs: np.ndarray, index_type: str = "dot"):
     """Setup a FAISS index for inner product similarity."""
     dim = corpus_embs.shape[1]
-    index = faiss.IndexFlatIP(dim)
+    if index_type == "dot":
+        index = faiss.IndexFlatIP(dim)
+    elif index_type == "l2":
+        index = faiss.IndexFlatL2(dim)
+    else:
+        raise ValueError(f"Unknown FAISS index type: {index_type}")
     index.add(corpus_embs)
     return index
 
@@ -466,7 +471,7 @@ def setup_annoy(corpus_embs: np.ndarray) -> AnnoyIndex:
     return index
 
 
-def setup_hnsw(corpus_embs: np.ndarray) -> hnswlib.Index:
+def setup_hnswlib(corpus_embs: np.ndarray) -> hnswlib.Index:
     """Setup an HNSW index for approximate nearest neighbor search."""
     dim = corpus_embs.shape[1]
     index = hnswlib.Index(space='cosine', dim=dim)
@@ -498,7 +503,7 @@ def retrieve_annoy(query_emb: np.ndarray, k: int, index: AnnoyIndex, corpus: Lis
     return [corpus[i] for i in ids]
 
 
-def retrieve_hnsw(query_emb: np.ndarray, k: int, index: hnswlib.Index, corpus: List[str]) -> List[str]:
+def retrieve_hnswlib(query_emb: np.ndarray, k: int, index: hnswlib.Index, corpus: List[str]) -> List[str]:
     """Retrieve using HNSW index."""
     ids, _ = index.knn_query(query_emb, k=k)
     return [corpus[i] for i in ids[0]]

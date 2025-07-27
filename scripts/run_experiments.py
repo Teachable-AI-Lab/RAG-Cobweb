@@ -20,10 +20,12 @@ def parse_args():
                        help="Print commands without executing them")
     parser.add_argument("--sequential", action="store_true",
                        help="Run experiments sequentially instead of submitting all at once")
+    parser.add_argument("--user", type=str, default=os.getenv("USER"),
+                       help="User for SLURM job submission")
     return parser.parse_args()
 
 
-def create_slurm_script(experiment, config, base_dir):
+def create_slurm_script(experiment, config, base_dir, user):
     """Create a SLURM script for a specific experiment."""
     exp_name = experiment["name"]
     dataset = experiment["dataset"]
@@ -45,8 +47,8 @@ def create_slurm_script(experiment, config, base_dir):
     # Create SLURM script content
     script_content = f"""#!/bin/bash
 #SBATCH --job-name={exp_name}
-#SBATCH --output=/slurm_outputs/{exp_name}.out
-#SBATCH --error=/slurm_errors/{exp_name}.err
+#SBATCH --output=/nethome/{user}/flash/slurm_outputs/{exp_name}.out
+#SBATCH --error=/nethome/{user}/flash/slurm_errors/{exp_name}.err
 """
     
     # Add SLURM options
@@ -125,7 +127,7 @@ def main():
         exp_name = experiment["name"]
         
         # Create SLURM script
-        script_content = create_slurm_script(experiment, config, base_dir)
+        script_content = create_slurm_script(experiment, config, base_dir, args.user)
         
         if args.dry_run:
             print(f"\n--- SLURM script for {exp_name} ---")
