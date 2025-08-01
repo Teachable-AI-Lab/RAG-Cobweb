@@ -1,11 +1,12 @@
 import torch
 import json
 import math
-from src.cobweb.CobwebTorchTree import CobwebTorchTree
 from tqdm import tqdm
+from collections import deque
 import os
 import hashlib
 from graphviz import Digraph
+from src.cobweb.CobwebTorchTree import CobwebTorchTree
 
 class CobwebWrapper:
     def __init__(self, corpus=None, corpus_embeddings=None, encode_func=lambda x: x):
@@ -20,6 +21,13 @@ class CobwebWrapper:
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.max_init_search = 100000
+
+        # Prediction index caching
+        self._prediction_index_valid = False
+        self._index_to_node = {}
+        self._node_means = None
+        self._node_vars = None
+        self._leaf_to_path_indices = None
 
         # Determine embedding shape
         if corpus_embeddings is not None:
@@ -64,62 +72,304 @@ class CobwebWrapper:
             leaf.sentence_id = start_index + i
             self.sentence_to_node[start_index + i] = leaf
 
+        # Invalidate prediction index when new sentences are added
+        self._invalidate_prediction_index()
 
-    def cobweb_predict_fast(self, input, k=5, return_ids=False, is_embedding=False):
+    def _invalidate_prediction_index(self):
+        """Invalidate the prediction index when tree structure changes"""
+        self._prediction_index_valid = False
+        self._index_to_node.clear()
+        self._node_means = None
+        self._node_vars = None
+        self._leaf_to_path_indices = None
+        self._path_matrix = None
+
+    def build_prediction_index(self):
         """
-        Ultra-fast prediction using sentence_to_node mapping directly.
-        Bypasses tree traversal entirely by using the leaf node mapping.
+        Build an index of all nodes in the tree for faster prediction.
+        Creates mappings between nodes and indices, and caches means/variances.
         """
+        if self._prediction_index_valid:
+            return
+        print("Building prediction index...")
+
+        if set(self.sentence_to_node.keys()) != set(range(len(self.sentences))):
+            raise ValueError("sentence_to_node mapping is inconsistent with sentence indices.")
+        
+        # Clear existing mappings
+        self._index_to_node.clear()
+        new_sentences = [None] * len(self.sentences)
+
+        # Collect all nodes via BFS traversal
+        idx = 0
+        leaf_idx = 0
+        queue = deque([(self.tree.root, tuple())])
+        self._leaf_to_path_indices = []
+        new_sentence_to_node = {}
+        while queue:
+            node, path = queue.popleft()
+            self._index_to_node[idx] = node
+            for child in getattr(node, 'children', []):
+                queue.append((child, path + (idx,)))
+            if hasattr(node, 'sentence_id') and node.sentence_id is not None:
+                self._leaf_to_path_indices.append(list(path)+[idx])
+                new_sentence_to_node[leaf_idx] = node
+                new_sentences[leaf_idx] = self.sentences[node.sentence_id]
+                node.sentence_id = leaf_idx
+                leaf_idx += 1
+            idx += 1
+        self.sentence_to_node = new_sentence_to_node
+        self.sentences = new_sentences
+
+        # Pre-allocate tensors for means and variances
+        num_nodes = idx
+        self._node_means = torch.zeros(num_nodes, self.tree.shape[0], 
+                                     device=self.device, dtype=torch.float)
+        self._node_vars = torch.zeros(num_nodes, self.tree.shape[0], 
+                                    device=self.device, dtype=torch.float)
+
+        # Build sparse path matrix for efficient path scoring
+        num_leaves = len(self._leaf_to_path_indices)
+        path_row_indices = []
+        path_col_indices = []
+        path_weights = []
+        
+        # Default level weights - can be customized
+        if not hasattr(self, '_level_weights') or self._level_weights is None:
+            # Default to constant schedule with value 1.0
+            level_weights = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+        else:
+            level_weights = self._level_weights
+        
+        for leaf_idx, path in enumerate(self._leaf_to_path_indices):
+            path_length = len(path)
+            for depth, node_idx in enumerate(path):
+                path_row_indices.append(leaf_idx)
+                path_col_indices.append(node_idx)
+                # Get weight for this level, default to 1.0 if beyond specified weights
+                weight = level_weights[depth] if depth < len(level_weights) else 1.0
+                # Normalize by path length to give equal total weight to all paths
+                normalized_weight = weight / path_length
+                path_weights.append(normalized_weight)
+        
+        # Create sparse matrix: [num_leaves, num_nodes]
+        if path_row_indices:  # Only create if we have paths
+            path_indices = torch.stack([
+                torch.tensor(path_row_indices, device=self.device),
+                torch.tensor(path_col_indices, device=self.device)
+            ])
+            path_values = torch.tensor(path_weights, device=self.device, dtype=torch.float)
+            self._path_matrix = torch.sparse_coo_tensor(
+                path_indices, path_values, 
+                (num_leaves, num_nodes), 
+                device=self.device
+            ).coalesce()
+        else:
+            self._path_matrix = None
+
+        # Fill tensors with node statistics
+        for idx, node in self._index_to_node.items():
+            self._node_means[idx] = node.mean
+            # Compute variance using the tree's variance computation method
+            if hasattr(node, 'meanSq') and node.count > 0:
+                self._node_vars[idx] = self.tree.compute_var(node.meanSq, node.count)
+            else:
+                # Use prior variance for empty nodes
+                self._node_vars[idx] = self.tree.prior_var
+
+        self._prediction_index_valid = True
+        print(f"Prediction index built: {num_nodes} nodes indexed, {leaf_idx} leaf paths cached")
+        if self._path_matrix is not None:
+            print(f"Path matrix shape: {self._path_matrix.shape}, nnz: {self._path_matrix._nnz()}")
+
+    def cobweb_predict_indexed(self, input, k=5, return_ids=False, is_embedding=False):
+        """
+        Ultra-fast prediction using sparse matrix operations for path scoring.
+        """
+        # Ensure prediction index is built
+        self.build_prediction_index()
+        
         if is_embedding:
             emb = input
         else:
             emb = self.encode_func([input])[0]
 
-        x = torch.tensor(emb, device=self.device).unsqueeze(0)  # (1, D)
+        x = torch.tensor(emb, device=self.device)  # (D,)
         
-        # Get all leaf nodes directly from sentence_to_node
-        leaf_nodes = list(self.sentence_to_node.values())
-        
-        if not leaf_nodes:
+        num_leaves = len(self._leaf_to_path_indices)
+        if num_leaves == 0:
             return []
         
-        # Pre-allocate tensors for vectorized computation
-        num_leaves = len(leaf_nodes)
-        leaf_means = torch.zeros(num_leaves, self.tree.shape[0], device=self.device)
-        leaf_vars = torch.zeros(num_leaves, self.tree.shape[0], device=self.device)
+        # Compute log probabilities for all nodes at once
+        # log_2pi = math.log(2 * math.pi)
+        diff_sq = (x.unsqueeze(0) - self._node_means) ** 2  # (num_nodes, D)
         
-        # Fill tensors efficiently
-        for i, node in enumerate(leaf_nodes):
-            leaf_means[i] = node.mean
-            leaf_vars[i] = torch.clamp(node.meanSq / node.count, min=1e-8)
+        node_log_probs = -0.5 * (
+            # log_2pi * self.tree.shape[0] +
+            torch.log(self._node_vars).sum(dim=1) +
+            (diff_sq / self._node_vars).sum(dim=1)
+        )  # (num_nodes,)
         
-        # Vectorized log probability computation
-        log_2pi = math.log(2 * math.pi)
-        diff_sq = (x - leaf_means) ** 2  # (N, D)
-        
-        log_probs = -0.5 * (
-            log_2pi * self.tree.shape[0] +
-            torch.log(leaf_vars).sum(dim=1) +
-            (diff_sq / leaf_vars).sum(dim=1)
-        )
+        # Sum log probabilities along each leaf's path using sparse matrix multiplication
+        # self._path_matrix is [num_leaves, num_nodes], node_log_probs is [num_nodes]
+        if self._path_matrix is not None:
+            leaf_scores = torch.sparse.mm(self._path_matrix, node_log_probs.unsqueeze(1)).squeeze(1)  # (num_leaves,)
+        else:
+            return []
         
         # Get top-k results
         if k >= num_leaves:
-            sorted_indices = torch.argsort(log_probs, descending=True)
-            selected_nodes = [leaf_nodes[idx] for idx in sorted_indices]
+            sorted_indices = torch.argsort(leaf_scores, descending=True)
+            selected_leaf_indices = sorted_indices.tolist()
         else:
-            _, topk_indices = torch.topk(log_probs, k, largest=True)
-            selected_nodes = [leaf_nodes[idx] for idx in topk_indices]
+            _, topk_indices = torch.topk(leaf_scores, k, largest=True)
+            selected_leaf_indices = topk_indices.tolist()
         
-        # Convert to sentence IDs or sentences
+        # Convert leaf indices to sentence IDs and results
         results = []
-        for node in selected_nodes:
-            sid = getattr(node, 'sentence_id', None)
-            if sid is None or sid >= len(self.sentences):
-                continue
-            results.append(sid if return_ids else self.sentences[sid])
+        for leaf_idx in selected_leaf_indices:
+            if leaf_idx < len(self.sentences):
+                results.append(leaf_idx if return_ids else self.sentences[leaf_idx])
         
         return results
+
+    def get_node_path_stats(self, sentence_id):
+        """
+        Get statistics for all nodes in the path from root to a specific leaf.
+        Returns means and variances for the entire path.
+        """
+        self.build_prediction_index()
+        
+        if sentence_id not in self._leaf_to_path_indices:
+            return None, None
+            
+        path_indices = self._leaf_to_path_indices[sentence_id]
+        path_indices_tensor = torch.tensor(path_indices, device=self.device)
+        
+        path_means = self._node_means[path_indices_tensor]
+        path_vars = self._node_vars[path_indices_tensor]
+        
+        return path_means, path_vars
+
+    def get_prediction_index_info(self):
+        """
+        Get diagnostic information about the prediction index.
+        Returns dict with index statistics.
+        """
+        info = {
+            "index_valid": self._prediction_index_valid,
+            "total_nodes": len(self._node_to_index) if self._prediction_index_valid else 0,
+            "leaf_paths_cached": len(self._leaf_to_path_indices) if self._prediction_index_valid else 0,
+            "means_cached": self._node_means is not None,
+            "vars_cached": self._node_vars is not None,
+        }
+        
+        if self._prediction_index_valid and self._node_means is not None:
+            info["means_shape"] = tuple(self._node_means.shape)
+            info["vars_shape"] = tuple(self._node_vars.shape)
+            info["device"] = str(self._node_means.device)
+        
+        return info
+
+    def set_level_weights(self, weights):
+        """
+        Set custom weights for different tree levels during prediction.
+        
+        Args:
+            weights (list): List of weights for each level [root, level1, level2, ...]
+                          Example: [1.0, 2.0, 4.0, 1.0] gives different weights to each level
+        """
+        self._level_weights = weights
+        self._weight_schedule = None  # Clear any schedule when setting manual weights
+        # Invalidate prediction index to force rebuild with new weights
+        self._invalidate_prediction_index()
+        
+    def set_weight_schedule(self, schedule_type, max_depth=10, **kwargs):
+        """
+        Set a weight schedule for different tree levels during prediction.
+        
+        Args:
+            schedule_type (str): Type of schedule - 'constant', 'linear', 'quadratic', 'exponential'
+            max_depth (int): Maximum depth to generate weights for
+            **kwargs: Additional parameters for specific schedules
+                - For 'linear': 'start' (default 1.0), 'end' (default 1.0), 'direction' ('increase'/'decrease')
+                - For 'quadratic': 'start_n' (default 1), 'scale' (default 1.0)
+                - For 'exponential': 'base' (default 0.5), 'scale' (default 1.0)
+        """
+        self._weight_schedule = schedule_type
+        self._schedule_params = kwargs
+        self._level_weights = self._generate_weight_schedule(schedule_type, max_depth, **kwargs)
+        # Invalidate prediction index to force rebuild with new weights
+        self._invalidate_prediction_index()
+        
+    def _generate_weight_schedule(self, schedule_type, max_depth, **kwargs):
+        """Generate weights based on the specified schedule type."""
+        weights = []
+        
+        if schedule_type == 'constant':
+            value = kwargs.get('value', 1.0)
+            weights = [value] * max_depth
+            
+        elif schedule_type == 'linear':
+            start = kwargs.get('start', 1.0)
+            end = kwargs.get('end', 1.0)
+            direction = kwargs.get('direction', 'increase')
+            
+            if direction == 'decrease':
+                start, end = end, start
+                
+            if max_depth == 1:
+                weights = [start]
+            else:
+                step = (end - start) / (max_depth - 1)
+                weights = [start + i * step for i in range(max_depth)]
+                
+        elif schedule_type == 'quadratic':
+            start_n = kwargs.get('start_n', 1)
+            scale = kwargs.get('scale', 1.0)
+            
+            for i in range(max_depth):
+                n = start_n + i
+                if n == 0:
+                    n = 1  # Skip over 0 to avoid division by zero
+                weights.append(scale / (n ** 2))
+                
+        elif schedule_type == 'exponential':
+            base = kwargs.get('base', 0.5)  # Exponential decay base
+            scale = kwargs.get('scale', 1.0)
+            
+            for i in range(max_depth):
+                weights.append(scale * (base ** i))
+                
+        else:
+            raise ValueError(f"Unknown schedule type: {schedule_type}")
+            
+        return weights
+        
+    def get_level_weights(self):
+        """Get current level weights"""
+        return getattr(self, '_level_weights', [1.0, 1.0, 1.0, 1.0])
+        
+    def get_weight_schedule_info(self):
+        """Get information about the current weight schedule"""
+        return {
+            'schedule_type': getattr(self, '_weight_schedule', None),
+            'schedule_params': getattr(self, '_schedule_params', {}),
+            'current_weights': self.get_level_weights()
+        }
+
+    def force_rebuild_index(self):
+        """Force rebuild of the prediction index"""
+        self._invalidate_prediction_index()
+        self.build_prediction_index()
+
+
+    def cobweb_predict_fast(self, input, k=5, return_ids=False, is_embedding=False):
+        """
+        Ultra-fast prediction using pre-built indices and cached statistics.
+        This is now an alias for the indexed prediction method.
+        """
+        return self.cobweb_predict_indexed(input, k, return_ids, is_embedding)
 
     def cobweb_predict(self, input, k=5, return_ids=False, is_embedding=False):
         """
@@ -215,6 +465,14 @@ class CobwebWrapper:
         wrapper.sentences = data.get("sentences", [])
         wrapper.device = data.get("device", "cuda" if torch.cuda.is_available() else "cpu")
         wrapper.max_init_search = data.get("max_init_search", 100000)
+
+        # Initialize prediction index attributes
+        wrapper._prediction_index_valid = False
+        wrapper._node_to_index = {}
+        wrapper._index_to_node = {}
+        wrapper._node_means = None
+        wrapper._node_vars = None
+        wrapper._leaf_to_path_indices = {}
 
         # Reconstruct sentence_to_node mapping
         sentence_to_node = {}
