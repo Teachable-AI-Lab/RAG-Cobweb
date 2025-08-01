@@ -35,9 +35,9 @@
             "dataset": "ms_marco",
             "config": "configs/benchmarks/shared/st_extreme.json",
             "slurm_options": {
-                "time": "04:00:00",
+                "time": "04:30:00",
                 "mem": "20G",
-                "cpus_per_task": 4
+                "cpus_per_task": 2
             }
         }
     ],

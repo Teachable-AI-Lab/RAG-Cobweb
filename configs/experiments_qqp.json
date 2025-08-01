@@ -37,7 +37,7 @@
             "slurm_options": {
                 "time": "04:00:00",
                 "mem": "20G",
-                "cpus_per_task": 4
+                "cpus_per_task": 2
             }
         }
     ],

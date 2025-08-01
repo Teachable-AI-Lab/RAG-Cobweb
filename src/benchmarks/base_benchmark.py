@@ -279,7 +279,7 @@ class BaseBenchmark(ABC):
         )
         
         # Run benchmarks
-        include_cobweb_fast = kwargs.get('include_cobweb_fast', False)
+        include_cobweb_fast = kwargs.get('include_cobweb_fast', True)
         results = self.run_benchmark_methods(
             embeddings, pca_ica_data, model_name, split, unique_id, 
             top_k, method, include_cobweb_fast
