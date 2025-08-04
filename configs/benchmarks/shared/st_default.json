@@ -1,5 +1,5 @@
 {
-    "model_name": "all-roberta-large-v1",
+    "model_name": "gtr-t5-large",
     "subset_size": 1000,
     "split": "validation",
     "target_size": 500,

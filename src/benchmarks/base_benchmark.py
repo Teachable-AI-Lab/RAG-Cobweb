@@ -201,13 +201,6 @@ class BaseBenchmark(ABC):
         if 'Cobweb PCA + ICA' in get_benchmarks:
             print(f"Setting up PCA + ICA Cobweb...")
             cobweb_pca_ica = load_cobweb_model(model_name, corpus, pca_ica_corpus_embs, split, "pca_ica", unique_id=unique_id)
-            print(f"Evaluating Cobweb PCA + ICA")
-            results.append(evaluate_retrieval("Cobweb PCA + ICA", pca_ica_queries_embs, targets,
-                                            lambda q, k: retrieve_cobweb_basic(q, k, cobweb_pca_ica), top_k))
-            print(f"--- Cobweb PCA + ICA Metrics ---")
-            print_metrics_table(results[-1], save_path=save_path)
-            
-            # Add fast Cobweb evaluation if requested
             if include_cobweb_fast:
                 print(f"--- Evaluating PCA + ICA Fast ---")
                 t = time.time()
@@ -217,6 +210,12 @@ class BaseBenchmark(ABC):
                                                 lambda q, k: retrieve_cobweb_basic(q, k, cobweb_pca_ica, True), top_k))
                 print(f"--- Cobweb PCA + ICA Fast Metrics ---")
                 print_metrics_table(results[-1], save_path=save_path)
+            print(f"Evaluating Cobweb PCA + ICA")
+            results.append(evaluate_retrieval("Cobweb PCA + ICA", pca_ica_queries_embs, targets,
+                                            lambda q, k: retrieve_cobweb_basic(q, k, cobweb_pca_ica), top_k))
+            print(f"--- Cobweb PCA + ICA Metrics ---")
+            print_metrics_table(results[-1], save_path=save_path)
+
         
         return results
     

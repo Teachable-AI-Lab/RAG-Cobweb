@@ -45,7 +45,7 @@ def run_qqp_benchmark(model_name: str, subset_size: int = 7500, split: str = "va
         compute=compute,
         method=method,
         target_dim=0.96,
-        include_cobweb_fast=True  # QQP includes fast Cobweb evaluation
+        include_cobweb_fast=True
     )
 
 

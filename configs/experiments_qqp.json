@@ -1,7 +1,7 @@
 {
     "experiments": [
         {
-            "name": "qqp_roberta_small",
+            "name": "qqp_t5_small",
             "dataset": "qqp",
             "config": "configs/benchmarks/shared/st_default.json",
             "slurm_options": {
@@ -11,7 +11,7 @@
             }
         },
         {
-            "name": "qqp_roberta_medium",
+            "name": "qqp_t5_medium",
             "dataset": "qqp",
             "config": "configs/benchmarks/shared/st_medium.json",
             "slurm_options": {
@@ -21,7 +21,7 @@
             }
         },
         {
-            "name": "qqp_roberta_large",
+            "name": "qqp_t5_large",
             "dataset": "qqp",
             "config": "configs/benchmarks/shared/st_large.json",
             "slurm_options": {
@@ -31,7 +31,7 @@
             }
         },
         {
-            "name": "qqp_roberta_extreme",
+            "name": "qqp_t5_extreme",
             "dataset": "qqp",
             "config": "configs/benchmarks/shared/st_extreme.json",
             "slurm_options": {
