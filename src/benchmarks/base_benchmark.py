@@ -49,6 +49,8 @@ class BaseBenchmark(ABC):
                    'HNSWLib', 'HNSWLib PCA + ICA', 'Cobweb Basic', 'Cobweb PCA + ICA']
         elif method == "cobweb":
             return ['Cobweb Basic', 'Cobweb PCA + ICA']
+        elif method == "cobweb_pca":
+            return ['Cobweb PCA + ICA']
         else:
             raise ValueError(f"Unknown method: {method}")
     

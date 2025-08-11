@@ -74,7 +74,6 @@ class CobwebWrapper:
             if leaf.sentence_id is None:
                 leaf.sentence_id = []
             leaf.sentence_id.append(start_index + i)
-            # leaf.sentence_id = start_index + i
             self.sentence_to_node[start_index + i] = leaf
 
         # Invalidate prediction index when new sentences are added

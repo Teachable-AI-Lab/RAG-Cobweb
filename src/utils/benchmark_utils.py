@@ -18,6 +18,7 @@ from transformers import (
     DPRQuestionEncoderTokenizer, DPRContextEncoderTokenizer
 )
 import torch
+from torch.utils.data import DataLoader, Dataset
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics import ndcg_score
 
@@ -47,6 +48,18 @@ MODEL_TYPE_MAPPING = {
     # GPT2 models
     "openai-community/gpt2": {"type": "transformer", "model_class": AutoModel, "pooling": "mean", "add_pad_token": True},
 }
+
+
+class TextDataset(Dataset):
+    """Simple dataset for text embeddings with GPU support."""
+    def __init__(self, texts: List[str]):
+        self.texts = texts
+    
+    def __len__(self):
+        return len(self.texts)
+    
+    def __getitem__(self, idx):
+        return self.texts[idx]
 
 
 def get_model_config(model_name: str) -> dict:
@@ -193,6 +206,68 @@ def get_results_path(model_name: str, dataset: str, split: str, unique_id: str) 
     return f"outputs/{dataset}/benchmark_{model_name}_{split}_{unique_id}.txt"
 
 
+def _compute_embeddings_gpu(texts: List[str], tokenizer, model, model_config: dict, batch_size: int = 32) -> np.ndarray:
+    """Compute embeddings using GPU with DataLoader for efficient batch processing."""
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = model.to(device)
+    model.eval()
+    
+    # Create dataset and dataloader with CPU workers
+    dataset = TextDataset(texts)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False, 
+                          num_workers=min(8, len(os.sched_getaffinity(0))))
+    
+    all_embeddings = []
+    pooling = model_config["pooling"]
+    
+    with torch.no_grad():
+        for batch_texts in tqdm(dataloader, desc="Computing embeddings"):
+            inputs = tokenizer(batch_texts, return_tensors='pt', padding=True, 
+                             truncation=True, max_length=512)
+            inputs = {k: v.to(device) for k, v in inputs.items()}
+            
+            outputs = model(**inputs)
+            last_hidden = outputs.hidden_states[-1]
+            
+            if pooling == "cls":
+                batch_embeddings = last_hidden[:, 0, :].cpu()
+            elif pooling == "mean":
+                mask = inputs['attention_mask'].unsqueeze(-1).expand(last_hidden.size()).float()
+                sum_hidden = (last_hidden * mask).sum(dim=1)
+                divisor = mask.sum(dim=1).clamp(min=1e-9)
+                batch_embeddings = (sum_hidden / divisor).cpu()
+            else:
+                raise ValueError(f"Unknown pooling strategy: {pooling}")
+            
+            all_embeddings.append(batch_embeddings.numpy())
+    
+    return np.vstack(all_embeddings)
+
+
+def _compute_embeddings_cpu(texts: List[str], tokenizer, model, model_config: dict) -> np.ndarray:
+    """Compute embeddings using CPU (original implementation)."""
+    model.eval()
+    inputs = tokenizer(texts, return_tensors='pt', padding=True, truncation=True, max_length=512)
+    
+    with torch.no_grad():
+        outputs = model(**inputs)
+    
+    pooling = model_config["pooling"]
+    if pooling == "cls":
+        last_hidden = outputs.hidden_states[-1]
+        embeddings = last_hidden[:, 0, :].numpy()
+    elif pooling == "mean":
+        last_hidden = outputs.hidden_states[-1]
+        mask = inputs['attention_mask'].unsqueeze(-1).expand(last_hidden.size()).float()
+        sum_hidden = (last_hidden * mask).sum(dim=1)
+        divisor = mask.sum(dim=1).clamp(min=1e-9)
+        embeddings = (sum_hidden / divisor).cpu().numpy()
+    else:
+        raise ValueError(f"Unknown pooling strategy: {pooling}")
+    
+    return embeddings
+
+
 def load_or_compute_embeddings(texts: List[str], model_name: str, dataset: str, split: str, 
                              compute: bool = False, unique_id: Optional[str] = None) -> np.ndarray:
     """
@@ -220,6 +295,7 @@ def load_or_compute_embeddings(texts: List[str], model_name: str, dataset: str, 
     
     model_config = get_model_config(model_name)
     print(f"Using model config: {model_config} for model: {model_name}")
+    
     if model_config["type"] == "transformer":
         tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
         if 't5' in model_name.lower():
@@ -231,24 +307,14 @@ def load_or_compute_embeddings(texts: List[str], model_name: str, dataset: str, 
             
         model_class = model_config["model_class"]
         model = model_class.from_pretrained(model_name, trust_remote_code=True, output_hidden_states=True)
-        model.eval()
-        inputs = tokenizer(texts, return_tensors='pt', padding=True, truncation=True, max_length=512)
-        with torch.no_grad():
-            outputs = model(**inputs)
         
-        # Apply pooling strategy
-        pooling = model_config["pooling"]
-        if pooling == "cls":
-            last_hidden = outputs.hidden_states[-1]
-            embeddings = last_hidden[:, 0, :].numpy()  # CLS token
-        elif pooling == "mean":
-            last_hidden = outputs.hidden_states[-1]
-            mask = inputs['attention_mask'].unsqueeze(-1).expand(last_hidden.size()).float()
-            sum_hidden = (last_hidden * mask).sum(dim=1)
-            divisor = mask.sum(dim=1).clamp(min=1e-9)
-            embeddings = (sum_hidden / divisor).cpu().numpy()
+        # Choose GPU or CPU computation based on availability
+        if torch.cuda.is_available():
+            print("Using GPU with CPU workers for embedding computation")
+            embeddings = _compute_embeddings_gpu(texts, tokenizer, model, model_config)
         else:
-            raise ValueError(f"Unknown pooling strategy: {pooling}")
+            print("Using CPU for embedding computation")
+            embeddings = _compute_embeddings_cpu(texts, tokenizer, model, model_config)
             
     else:
         # print(f"Unknown model type {model_config['type']}, falling back to SentenceTransformer")

@@ -1,15 +1,14 @@
 {
     "experiments": [
         {
-            "name": "qqp_gpt_gpu",
-            "dataset": "qqp",
+            "name": "ms_marco_gpt_gpu2",
+            "dataset": "ms_marco",
             "config": "configs/benchmarks/shared/gpt.json",
             "slurm_options": {
                 "time": "05:30:00",
-                "cpus_per_task": 8,
-                "gpus-per-node": "a40",
+                "cpus_per_task": 4,
                 "mem": "16GB",
-                "exclude": "spot,heistotron"
+                "exclude": "clippy"
             }
         }
     ],
