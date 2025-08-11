@@ -44,11 +44,12 @@ class CobwebTorchNode(object):
         self.children = []
         self.parent = None
         self.tree = None
+        self.sentence_id = []  # Used to track the sentence ID for this node
 
         if otherNode:
             self.tree = otherNode.tree
             self.parent = otherNode.parent
-            self.update_counts_from_node(otherNode)
+            self.update_counts_from_node(otherNode) 
 
             for child in otherNode.children:
                 self.children.append(CobwebTorchNode(shape=self.tree.shape, device=self.tree.device, otherNode=child))

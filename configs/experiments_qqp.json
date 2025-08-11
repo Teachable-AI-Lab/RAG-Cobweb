@@ -1,9 +1,9 @@
 {
     "experiments": [
         {
-            "name": "qqp_t5_small",
+            "name": "qqp_roberta_small",
             "dataset": "qqp",
-            "config": "configs/benchmarks/shared/st_default.json",
+            "config": "configs/benchmarks/shared/roberta_st_default.json",
             "slurm_options": {
                 "time": "01:30:00",
                 "mem": "16G",
@@ -11,9 +11,9 @@
             }
         },
         {
-            "name": "qqp_t5_medium",
+            "name": "qqp_roberta_medium",
             "dataset": "qqp",
-            "config": "configs/benchmarks/shared/st_medium.json",
+            "config": "configs/benchmarks/shared/roberta_st_medium.json",
             "slurm_options": {
                 "time": "02:00:00",
                 "mem": "20G",
@@ -21,9 +21,9 @@
             }
         },
         {
-            "name": "qqp_t5_large",
+            "name": "qqp_roberta_large",
             "dataset": "qqp",
-            "config": "configs/benchmarks/shared/st_large.json",
+            "config": "configs/benchmarks/shared/roberta_st_large.json",
             "slurm_options": {
                 "time": "02:30:00",
                 "mem": "20G",
@@ -31,9 +31,49 @@
             }
         },
         {
-            "name": "qqp_t5_extreme",
+            "name": "qqp_roberta_extreme",
             "dataset": "qqp",
-            "config": "configs/benchmarks/shared/st_extreme.json",
+            "config": "configs/benchmarks/shared/roberta_st_extreme.json",
+            "slurm_options": {
+                "time": "04:00:00",
+                "mem": "20G",
+                "cpus_per_task": 2
+            }
+        },
+        {
+            "name": "qqp_t5_st_small",
+            "dataset": "qqp",
+            "config": "configs/benchmarks/shared/t5_st_default.json",
+            "slurm_options": {
+                "time": "01:30:00",
+                "mem": "16G",
+                "cpus_per_task": 2
+            }
+        },
+        {
+            "name": "qqp_t5_st_medium",
+            "dataset": "qqp",
+            "config": "configs/benchmarks/shared/t5_st_medium.json",
+            "slurm_options": {
+                "time": "02:00:00",
+                "mem": "20G",
+                "cpus_per_task": 2
+            }
+        },
+        {
+            "name": "qqp_t5_st_large",
+            "dataset": "qqp",
+            "config": "configs/benchmarks/shared/t5_st_large.json",
+            "slurm_options": {
+                "time": "02:30:00",
+                "mem": "20G",
+                "cpus_per_task": 2
+            }
+        },
+        {
+            "name": "qqp_t5_st_extreme",
+            "dataset": "qqp",
+            "config": "configs/benchmarks/shared/t5_st_extreme.json",
             "slurm_options": {
                 "time": "04:00:00",
                 "mem": "20G",

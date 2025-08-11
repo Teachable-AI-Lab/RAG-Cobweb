@@ -1,0 +1,8 @@
+{
+    "model_name": "all-roberta-large-v1",
+    "subset_size": 10000,
+    "split": "validation",
+    "target_size": 1000,
+    "top_k": 20,
+    "compute": true
+}

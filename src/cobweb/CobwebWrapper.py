@@ -1,5 +1,6 @@
 import torch
 import json
+import random
 import math
 from tqdm import tqdm
 from collections import deque
@@ -28,6 +29,7 @@ class CobwebWrapper:
         self._node_means = None
         self._node_vars = None
         self._leaf_to_path_indices = None
+        self.max_depth = 0
 
         # Determine embedding shape
         if corpus_embeddings is not None:
@@ -69,7 +71,10 @@ class CobwebWrapper:
                                    desc="Training CobwebTree"):
             self.sentences.append(sent)
             leaf = self.tree.ifit(torch.tensor(emb, device=self.device))
-            leaf.sentence_id = start_index + i
+            if leaf.sentence_id is None:
+                leaf.sentence_id = []
+            leaf.sentence_id.append(start_index + i)
+            # leaf.sentence_id = start_index + i
             self.sentence_to_node[start_index + i] = leaf
 
         # Invalidate prediction index when new sentences are added
@@ -103,33 +108,44 @@ class CobwebWrapper:
         # Collect all nodes via BFS traversal
         idx = 0
         leaf_idx = 0
-        queue = deque([(self.tree.root, tuple())])
-        self._leaf_to_path_indices = []
+        queue = [(self.tree.root, tuple())]
+        self._leaf_to_path_indices = [None] * len(self.sentences)
         new_sentence_to_node = {}
         while queue:
-            node, path = queue.popleft()
+            node, path = queue[0]
+            queue = queue[1:]
             self._index_to_node[idx] = node
             for child in getattr(node, 'children', []):
                 queue.append((child, path + (idx,)))
-            if hasattr(node, 'sentence_id') and node.sentence_id is not None:
-                self._leaf_to_path_indices.append(list(path)+[idx])
-                new_sentence_to_node[leaf_idx] = node
-                new_sentences[leaf_idx] = self.sentences[node.sentence_id]
-                node.sentence_id = leaf_idx
+            if hasattr(node, 'sentence_id') and node.sentence_id:
+                for sid in node.sentence_id:
+                    if sid < len(self.sentences):
+                        self._leaf_to_path_indices[sid] = list(path)+[idx]
+                        new_sentence_to_node[sid] = node
+                        new_sentences[sid] = self.sentences[sid]
+                    else:
+                        print(f"[Warning] Node has invalid sentence ID {sid}, skipping.")
+                self.max_depth = max(self.max_depth, len(path) + 1)
+                # new_sentence_to_node[leaf_idx] = node
+                # new_sentences[leaf_idx] = self.sentences[node.sentence_id]
+                # node.sentence_id = leaf_idx
                 leaf_idx += 1
             idx += 1
-        self.sentence_to_node = new_sentence_to_node
-        self.sentences = new_sentences
-
-        # Pre-allocate tensors for means and variances
-        num_nodes = idx
-        self._node_means = torch.zeros(num_nodes, self.tree.shape[0], 
-                                     device=self.device, dtype=torch.float)
-        self._node_vars = torch.zeros(num_nodes, self.tree.shape[0], 
-                                    device=self.device, dtype=torch.float)
+        # self.sentence_to_node = new_sentence_to_node
+        # self.sentences = new_sentences
+        if leaf_idx != len(self.sentences):
+            print(f"[Warning] Leaf count mismatch: expected {len(self.sentences)}, found {leaf_idx}.")
+        for i, sid in enumerate(self._leaf_to_path_indices):
+            if sid is None:
+                print(f"[Warning] Leaf path index for sentence ID {i} is None. This may indicate missing sentences in the tree.")
+                node = self.sentence_to_node.get(i, None)
+                print(node.sentence_id, i)
+            if node not in self._index_to_node.values():
+                print(f"[Warning] Node for sentence ID {i} not found in indexed nodes. This may indicate a bug.")
 
         # Build sparse path matrix for efficient path scoring
         num_leaves = len(self._leaf_to_path_indices)
+        num_nodes = idx
         path_row_indices = []
         path_col_indices = []
         path_weights = []
@@ -140,6 +156,7 @@ class CobwebWrapper:
             level_weights = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
         else:
             level_weights = self._level_weights
+    
         
         for leaf_idx, path in enumerate(self._leaf_to_path_indices):
             path_length = len(path)
@@ -166,6 +183,15 @@ class CobwebWrapper:
             ).coalesce()
         else:
             self._path_matrix = None
+
+        # Pre-allocate tensors for means and variances
+        num_nodes = idx
+        self._node_means = torch.zeros(num_nodes, self.tree.shape[0], 
+                                     device=self.device, dtype=torch.float)
+        self._node_vars = torch.zeros(num_nodes, self.tree.shape[0], 
+                                    device=self.device, dtype=torch.float)
+
+
 
         # Fill tensors with node statistics
         for idx, node in self._index_to_node.items():
@@ -219,10 +245,16 @@ class CobwebWrapper:
         
         # Get top-k results
         if k >= num_leaves:
-            sorted_indices = torch.argsort(leaf_scores, descending=True)
+            # Add small random noise to break ties randomly
+            noise = torch.randn_like(leaf_scores) * 1e-6
+            noisy_scores = leaf_scores + noise
+            sorted_indices = torch.argsort(noisy_scores, descending=True)
             selected_leaf_indices = sorted_indices.tolist()
         else:
-            _, topk_indices = torch.topk(leaf_scores, k, largest=True)
+            # Add small random noise to break ties randomly
+            noise = torch.randn_like(leaf_scores) * 1e-6
+            noisy_scores = leaf_scores + noise
+            _, topk_indices = torch.topk(noisy_scores, k, largest=True)
             selected_leaf_indices = topk_indices.tolist()
         
         # Convert leaf indices to sentence IDs and results
@@ -296,6 +328,8 @@ class CobwebWrapper:
                 - For 'quadratic': 'start_n' (default 1), 'scale' (default 1.0)
                 - For 'exponential': 'base' (default 0.5), 'scale' (default 1.0)
         """
+        if self._prediction_index_valid:
+            max_depth = self.max_depth
         self._weight_schedule = schedule_type
         self._schedule_params = kwargs
         self._level_weights = self._generate_weight_schedule(schedule_type, max_depth, **kwargs)
@@ -326,21 +360,19 @@ class CobwebWrapper:
                 
         elif schedule_type == 'quadratic':
             start_n = kwargs.get('start_n', 1)
-            scale = kwargs.get('scale', 1.0)
             
             for i in range(max_depth):
                 n = start_n + i
                 if n == 0:
                     n = 1  # Skip over 0 to avoid division by zero
-                weights.append(scale / (n ** 2))
+                weights.append(1 / (n ** 2))
                 
         elif schedule_type == 'exponential':
             base = kwargs.get('base', 0.5)  # Exponential decay base
-            scale = kwargs.get('scale', 1.0)
             
             for i in range(max_depth):
-                weights.append(scale * (base ** i))
-                
+                weights.append((base ** i))
+
         else:
             raise ValueError(f"Unknown schedule type: {schedule_type}")
             
@@ -391,10 +423,12 @@ class CobwebWrapper:
 
         results = []
         for leaf in leaves:
-            sid = getattr(leaf, 'sentence_id', None)
-            if sid is None or sid >= len(self.sentences):
-                continue
-            results.append(sid if return_ids else self.sentences[sid])
+            sid_lst = getattr(leaf, 'sentence_id', None)
+            random.shuffle(sid_lst)  # Shuffle to break ties randomly
+            for sid in sid_lst:
+                if sid is None or sid >= len(self.sentences):
+                    continue
+                results.append(sid if return_ids else self.sentences[sid])
         return results
 
     def print_tree(self):

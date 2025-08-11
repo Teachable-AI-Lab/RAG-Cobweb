@@ -222,6 +222,8 @@ def load_or_compute_embeddings(texts: List[str], model_name: str, dataset: str, 
     print(f"Using model config: {model_config} for model: {model_name}")
     if model_config["type"] == "transformer":
         tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+        if 't5' in model_name.lower():
+            texts = ["Summarize :" + text for text in texts]
         
         # Handle GPT2 pad token
         if model_config.get("add_pad_token", False) and tokenizer.pad_token is None:
@@ -481,6 +483,11 @@ def setup_hnswlib(corpus_embs: np.ndarray) -> hnswlib.Index:
     return index
 
 
+def setup_torch_dot(corpus_embs: np.ndarray) -> torch.Tensor:
+    """Setup torch tensor for direct dot product similarity computation."""
+    return torch.from_numpy(corpus_embs).float()
+
+
 # === Retrieval Functions ===
 
 def retrieve_cobweb_basic(query_emb: np.ndarray, k: int, cobweb: CobwebWrapper, use_fast: bool = False) -> List[str]:
@@ -507,6 +514,21 @@ def retrieve_hnswlib(query_emb: np.ndarray, k: int, index: hnswlib.Index, corpus
     """Retrieve using HNSW index."""
     ids, _ = index.knn_query(query_emb, k=k)
     return [corpus[i] for i in ids[0]]
+
+
+def retrieve_torch_dot(query_emb: np.ndarray, k: int, corpus_embs: torch.Tensor, corpus: List[str]) -> List[str]:
+    """Retrieve using PyTorch matrix multiplication for dot product similarity."""
+    # Convert query to torch tensor
+    query_tensor = torch.from_numpy(query_emb).float()
+    
+    # Compute dot product similarities using matrix multiplication
+    # corpus_embs is (num_docs, embedding_dim), query_tensor is (embedding_dim,)
+    similarities = torch.matmul(corpus_embs, query_tensor)
+    
+    # Get top-k indices in descending order
+    _, top_k_indices = torch.topk(similarities, k, largest=True)
+    
+    return [corpus[i.item()] for i in top_k_indices]
 
 
 # === Evaluation Functions ===
