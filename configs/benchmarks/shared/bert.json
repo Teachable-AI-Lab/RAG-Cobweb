@@ -1,5 +1,5 @@
 {
-    "model_name": "bert-base-uncased",
+    "model_name": "all-roberta-large-v1",
     "subset_size": 7500,
     "split": "validation",
     "target_size": 1000,

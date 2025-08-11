@@ -1,6 +1,6 @@
 
 --- Metrics for FAISS ---
-Avg Latency: 2.45 ms with total time 2.45 seconds
+Avg Latency: 3.03 ms with total time 3.03 seconds
 +-----+--------+--------+--------+
 |  k  | Recall |  MRR   |  nDCG  |
 +-----+--------+--------+--------+
@@ -12,7 +12,7 @@ Avg Latency: 2.45 ms with total time 2.45 seconds
 +-----+--------+--------+--------+
 
 --- Metrics for Torch Dot ---
-Avg Latency: 2.58 ms with total time 2.58 seconds
+Avg Latency: 3.32 ms with total time 3.32 seconds
 +-----+--------+--------+--------+
 |  k  | Recall |  MRR   |  nDCG  |
 +-----+--------+--------+--------+
@@ -24,7 +24,7 @@ Avg Latency: 2.58 ms with total time 2.58 seconds
 +-----+--------+--------+--------+
 
 --- Metrics for FAISS PCA + ICA ---
-Avg Latency: 0.95 ms with total time 0.95 seconds
+Avg Latency: 1.56 ms with total time 1.56 seconds
 +-----+--------+--------+--------+
 |  k  | Recall |  MRR   |  nDCG  |
 +-----+--------+--------+--------+
@@ -36,7 +36,7 @@ Avg Latency: 0.95 ms with total time 0.95 seconds
 +-----+--------+--------+--------+
 
 --- Metrics for Torch PCA + ICA ---
-Avg Latency: 1.06 ms with total time 1.06 seconds
+Avg Latency: 1.85 ms with total time 1.85 seconds
 +-----+--------+--------+--------+
 |  k  | Recall |  MRR   |  nDCG  |
 +-----+--------+--------+--------+
@@ -48,7 +48,7 @@ Avg Latency: 1.06 ms with total time 1.06 seconds
 +-----+--------+--------+--------+
 
 --- Metrics for Cobweb Basic ---
-Avg Latency: 7.43 ms with total time 7.43 seconds
+Avg Latency: 7.93 ms with total time 7.93 seconds
 +-----+--------+--------+--------+
 |  k  | Recall |  MRR   |  nDCG  |
 +-----+--------+--------+--------+
@@ -60,7 +60,7 @@ Avg Latency: 7.43 ms with total time 7.43 seconds
 +-----+--------+--------+--------+
 
 --- Metrics for Cobweb Fast ---
-Avg Latency: 50.87 ms with total time 50.87 seconds
+Avg Latency: 96.08 ms with total time 96.08 seconds
 +-----+--------+--------+--------+
 |  k  | Recall |  MRR   |  nDCG  |
 +-----+--------+--------+--------+
@@ -72,7 +72,7 @@ Avg Latency: 50.87 ms with total time 50.87 seconds
 +-----+--------+--------+--------+
 
 --- Metrics for Cobweb PCA + ICA Fast ---
-Avg Latency: 24.92 ms with total time 24.92 seconds
+Avg Latency: 27.25 ms with total time 27.25 seconds
 +-----+--------+--------+--------+
 |  k  | Recall |  MRR   |  nDCG  |
 +-----+--------+--------+--------+
@@ -84,7 +84,7 @@ Avg Latency: 24.92 ms with total time 24.92 seconds
 +-----+--------+--------+--------+
 
 --- Metrics for Cobweb PCA + ICA Exponential Decay ---
-Avg Latency: 24.83 ms with total time 24.83 seconds
+Avg Latency: 28.45 ms with total time 28.45 seconds
 +-----+--------+--------+--------+
 |  k  | Recall |  MRR   |  nDCG  |
 +-----+--------+--------+--------+
@@ -96,7 +96,7 @@ Avg Latency: 24.83 ms with total time 24.83 seconds
 +-----+--------+--------+--------+
 
 --- Metrics for Cobweb PCA + ICA Exponential Increase ---
-Avg Latency: 25.1 ms with total time 25.1 seconds
+Avg Latency: 29.09 ms with total time 29.09 seconds
 +-----+--------+--------+--------+
 |  k  | Recall |  MRR   |  nDCG  |
 +-----+--------+--------+--------+
@@ -105,4 +105,16 @@ Avg Latency: 25.1 ms with total time 25.1 seconds
 | @5  | 0.136  | 0.097  | 0.104  |
 | @10 | 0.168  | 0.1012 | 0.1107 |
 | @20 | 0.261  | 0.1078 | 0.1331 |
++-----+--------+--------+--------+
+
+--- Metrics for Cobweb PCA + ICA ---
+Avg Latency: 1524.63 ms with total time 1524.63 seconds
++-----+--------+--------+--------+
+|  k  | Recall |  MRR   |  nDCG  |
++-----+--------+--------+--------+
+| @2  | 0.662  | 0.5485 | 0.5782 |
+| @3  |  0.78  | 0.5878 | 0.6301 |
+| @5  | 0.889  | 0.6132 | 0.6562 |
+| @10 | 0.986  | 0.6273 | 0.652  |
+| @20 | 0.994  | 0.6278 | 0.6128 |
 +-----+--------+--------+--------+

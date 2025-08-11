@@ -4,5 +4,5 @@
     "split": "validation",
     "target_size": 1000,
     "top_k": 20,
-    "compute": true
+    "compute": false
 }
