@@ -51,8 +51,10 @@ class BaseBenchmark(ABC):
             return ['Cobweb Basic', 'Cobweb PCA + ICA']
         elif method == "cobweb_pca":
             return ['Cobweb PCA + ICA']
+        elif method == "scale":
+            return ['FAISS', 'Cobweb PCA + ICA']
         else:
-            raise ValueError(f"Unknown method: {method}")
+            return []
     
     def setup_embeddings(self, corpus: List[str], queries: List[str], targets: List[str],
                         model_name: str, split: str, compute: bool, unique_id: str,
@@ -220,22 +222,7 @@ class BaseBenchmark(ABC):
                                                 lambda q, k: retrieve_cobweb_basic(q, k, cobweb, True), top_k))
                 print(f"--- Cobweb Constant Weighted Sum Metrics ---")
                 print_metrics_table(results[-1], save_path=save_path)
-                # cobweb.set_weight_schedule('exponential', base=0.5)
-                # t = time.time()
-                # cobweb.build_prediction_index()
-                # print(f"--- Cobweb Exponential Weighted Sum Index Built in {time.time() - t:.2f} seconds ---")
-                # results.append(evaluate_retrieval("Cobweb Exponential Decay", queries_embs, targets,
-                #                                 lambda q, k: retrieve_cobweb_basic(q, k, cobweb, True), top_k))
-                # print(f"--- Cobweb Exponential Decay Weighted Sum Metrics ---")
-                # print_metrics_table(results[-1], save_path=save_path)
-                # cobweb.set_weight_schedule('exponential', base=2)
-                # t = time.time()
-                # cobweb.build_prediction_index()
-                # print(f"--- Cobweb Exponential Increase (base=2) Index Built in {time.time() - t:.2f} seconds ---")
-                # results.append(evaluate_retrieval("Cobweb Exponential Increase", queries_embs, targets,
-                #                                 lambda q, k: retrieve_cobweb_basic(q, k, cobweb, True), top_k))
-                # print(f"--- Cobweb Exponential Increase Weighted Sum Metrics ---")
-                # print_metrics_table(results[-1], save_path=save_path)
+
             
         if 'Cobweb PCA + ICA' in get_benchmarks:
             print(f"Setting up PCA + ICA Cobweb...")
@@ -249,22 +236,7 @@ class BaseBenchmark(ABC):
                                                 lambda q, k: retrieve_cobweb_basic(q, k, cobweb_pca_ica, True), top_k))
                 print(f"--- Cobweb PCA + ICA Constant Weighted Sum Metrics ---")
                 print_metrics_table(results[-1], save_path=save_path)
-                cobweb_pca_ica.set_weight_schedule('exponential', base=0.5)
-                t= time.time()
-                cobweb_pca_ica.build_prediction_index()
-                print(f"--- Cobweb PCA + ICA Exponential Weighted Sum Index Built in {time.time() - t:.2f} seconds ---")
-                results.append(evaluate_retrieval("Cobweb PCA + ICA Exponential Decay", pca_ica_queries_embs, targets,
-                                                lambda q, k: retrieve_cobweb_basic(q, k, cobweb_pca_ica, True), top_k))
-                print(f"--- Cobweb PCA + ICA Exponential Decay Weighted Sum Metrics ---")
-                print_metrics_table(results[-1], save_path=save_path)
-                cobweb_pca_ica.set_weight_schedule('exponential', base=2)
-                t = time.time()
-                cobweb_pca_ica.build_prediction_index()
-                print(f"--- Cobweb PCA + ICA Exponential Increase (base=2) Index Built in {time.time() - t:.2f} seconds ---")
-                results.append(evaluate_retrieval("Cobweb PCA + ICA Exponential Increase", pca_ica_queries_embs, targets,
-                                                lambda q, k: retrieve_cobweb_basic(q, k, cobweb_pca_ica, True), top_k))
-                print(f"--- Cobweb PCA + ICA Exponential Increase Weighted Sum Metrics ---")
-                print_metrics_table(results[-1], save_path=save_path)
+
             print(f"Evaluating Cobweb PCA + ICA")
             results.append(evaluate_retrieval("Cobweb PCA + ICA", pca_ica_queries_embs, targets,
                                             lambda q, k: retrieve_cobweb_basic(q, k, cobweb_pca_ica), top_k))

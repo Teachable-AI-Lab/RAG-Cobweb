@@ -11,6 +11,8 @@ import hashlib
 from tqdm import tqdm
 from tabulate import tabulate
 from typing import List, Dict, Any, Tuple, Optional, Callable
+from multiprocessing import Pool, cpu_count
+from functools import partial
 
 from transformers import (
     AutoTokenizer, T5EncoderModel, AutoModel,
@@ -309,18 +311,17 @@ def load_or_compute_embeddings(texts: List[str], model_name: str, dataset: str, 
         model = model_class.from_pretrained(model_name, trust_remote_code=True, output_hidden_states=True)
         
         # Choose GPU or CPU computation based on availability
-        if torch.cuda.is_available():
-            print("Using GPU with CPU workers for embedding computation")
-            embeddings = _compute_embeddings_gpu(texts, tokenizer, model, model_config)
-        else:
-            print("Using CPU for embedding computation")
-            embeddings = _compute_embeddings_cpu(texts, tokenizer, model, model_config)
+        print("Using GPU with CPU workers for embedding computation")
+        embeddings = _compute_embeddings_gpu(texts, tokenizer, model, model_config)
             
     else:
         # print(f"Unknown model type {model_config['type']}, falling back to SentenceTransformer")
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        print(f"Using {device} device")
         model = SentenceTransformer(model_name, trust_remote_code=True)
-        embeddings = model.encode(texts, convert_to_numpy=True, normalize_embeddings=True)
-    
+        model.to(device)
+        embeddings = model.encode(texts, convert_to_numpy=True, normalize_embeddings=True, show_progress_bar=True, batch_size=256)
+
     print(f"Computed embeddings shape: {embeddings.shape}")
     if len(embeddings.shape) != 2:
         raise ValueError(f"Embeddings for {model_name} should be 2D, got {embeddings.shape}. Check the model and input texts.")
@@ -605,10 +606,95 @@ def get_eval_ks(top_k: int) -> List[int]:
     return sorted([k for k in base if k <= top_k])
 
 
-def evaluate_retrieval(name: str, queries: List[np.ndarray], targets: List[str], 
-                      retrieve_fn: Callable, top_k: int = 10) -> Dict[str, Any]:
+def _evaluate_single_query(args):
     """
-    Evaluate a retrieval method using multiple metrics.
+    Helper function to evaluate a single query-target pair.
+    This function is designed to be used with multiprocessing.
+    
+    Args:
+        args: Tuple containing (query, target, retrieve_fn, top_k, ks)
+    
+    Returns:
+        Tuple containing (query_metrics, latency, success, error_msg)
+        If success=False, query_metrics and latency will be None
+    """
+    query, target, retrieve_fn, top_k, ks = args
+    
+    try:
+        # Initialize metrics for this query
+        query_metrics = {f"recall@{k}": 0 for k in ks}
+        query_metrics.update({f"mrr@{k}": 0 for k in ks})
+        query_metrics.update({f"ndcg@{k}": 0 for k in ks})
+        
+        # Measure retrieval time
+        start = time.time()
+        retrieved = retrieve_fn(query, top_k)
+        latency = time.time() - start
+        
+        # Calculate metrics for each k
+        for k in ks:
+            top_k_results = retrieved[:k]
+            if target in top_k_results:
+                query_metrics[f"recall@{k}"] = 1
+                rank = top_k_results.index(target) + 1
+                query_metrics[f"mrr@{k}"] = 1 / rank
+            
+            relevance = [1 if doc == target else 0 for doc in top_k_results]
+            if sum(relevance) > 0:
+                ideal = sorted(relevance, reverse=True)
+                ndcg = ndcg_score([ideal], [relevance])
+                query_metrics[f"ndcg@{k}"] = ndcg
+        
+        return query_metrics, latency, True, None
+        
+    except Exception as e:
+        # Return error information for fallback processing
+        return None, None, False, str(e)
+
+
+def _evaluate_single_query_sequential(query, target, retrieve_fn, top_k, ks):
+    """
+    Sequential fallback function to evaluate a single query-target pair.
+    Used when parallel processing fails for specific queries.
+    
+    Args:
+        query: Query embedding
+        target: Target string (ground truth)
+        retrieve_fn: Function to retrieve results
+        top_k: Maximum number of results to retrieve
+        ks: List of k values to evaluate
+    
+    Returns:
+        Tuple containing (query_metrics, latency)
+    """
+    query_metrics = {f"recall@{k}": 0 for k in ks}
+    query_metrics.update({f"mrr@{k}": 0 for k in ks})
+    query_metrics.update({f"ndcg@{k}": 0 for k in ks})
+    
+    start = time.time()
+    retrieved = retrieve_fn(query, top_k)
+    latency = time.time() - start
+    
+    for k in ks:
+        top_k_results = retrieved[:k]
+        if target in top_k_results:
+            query_metrics[f"recall@{k}"] = 1
+            rank = top_k_results.index(target) + 1
+            query_metrics[f"mrr@{k}"] = 1 / rank
+        
+        relevance = [1 if doc == target else 0 for doc in top_k_results]
+        if sum(relevance) > 0:
+            ideal = sorted(relevance, reverse=True)
+            ndcg = ndcg_score([ideal], [relevance])
+            query_metrics[f"ndcg@{k}"] = ndcg
+    
+    return query_metrics, latency
+
+
+def evaluate_retrieval(name: str, queries: List[np.ndarray], targets: List[str], 
+                      retrieve_fn: Callable, top_k: int = 10, use_parallel: bool = False) -> Dict[str, Any]:
+    """
+    Evaluate a retrieval method using multiple metrics with optional parallelization and error handling.
     
     Args:
         name: Name of the retrieval method
@@ -616,6 +702,7 @@ def evaluate_retrieval(name: str, queries: List[np.ndarray], targets: List[str],
         targets: List of target strings (ground truth)
         retrieve_fn: Function to retrieve results given (query, k)
         top_k: Maximum number of results to retrieve
+        use_parallel: Whether to use parallel processing (default: True)
     
     Returns:
         Dictionary containing evaluation metrics
@@ -631,25 +718,92 @@ def evaluate_retrieval(name: str, queries: List[np.ndarray], targets: List[str],
         f"ndcg@{k}": 0 for k in ks
     })
 
-    latencies = []
+    if use_parallel:
+        # Prepare arguments for parallel processing
+        args_list = [(query, target, retrieve_fn, top_k, ks) for query, target in zip(queries, targets)]
+        
+        # Use all available CPU cores
+        num_workers = cpu_count()
+        print(f"Using {num_workers} parallel workers for evaluation")
+        
+        try:
+            with Pool(processes=num_workers) as pool:
+                # Process all queries in parallel with progress bar
+                results = list(tqdm(
+                    pool.imap(_evaluate_single_query, args_list), 
+                    total=len(queries), 
+                    desc=f"Evaluating {name} (parallel)"
+                ))
+        except Exception as e:
+            print(f"Parallel processing failed entirely: {e}")
+            print("Falling back to sequential processing for all queries")
+            use_parallel = False
+        
+        if use_parallel:  # Only process results if parallel processing succeeded
+            # Separate successful and failed results
+            successful_results = []
+            failed_queries = []
+            latencies = []
+            
+            for i, (query_metrics, latency, success, error_msg) in enumerate(results):
+                if success:
+                    successful_results.append((query_metrics, latency))
+                    latencies.append(latency)
+                    # Add to metrics
+                    for k in ks:
+                        metrics[f"recall@{k}"] += query_metrics[f"recall@{k}"]
+                        metrics[f"mrr@{k}"] += query_metrics[f"mrr@{k}"]
+                        metrics[f"ndcg@{k}"] += query_metrics[f"ndcg@{k}"]
+                else:
+                    failed_queries.append((i, queries[i], targets[i], error_msg))
+            
+            # Process failed queries sequentially
+            if failed_queries:
+                print(f"Processing {len(failed_queries)} failed queries sequentially...")
+                for idx, query, target, error_msg in tqdm(failed_queries, desc="Processing failed queries"):
+                    try:
+                        query_metrics, latency = _evaluate_single_query_sequential(
+                            query, target, retrieve_fn, top_k, ks
+                        )
+                        latencies.append(latency)
+                        # Add to metrics
+                        for k in ks:
+                            metrics[f"recall@{k}"] += query_metrics[f"recall@{k}"]
+                            metrics[f"mrr@{k}"] += query_metrics[f"mrr@{k}"]
+                            metrics[f"ndcg@{k}"] += query_metrics[f"ndcg@{k}"]
+                    except Exception as fallback_error:
+                        print(f"Query {idx} failed even in sequential mode: {fallback_error}")
+                        # Add zero metrics and default latency for completely failed queries
+                        latencies.append(0.0)
+            
+            print(f"Successfully processed {len(successful_results)} queries in parallel, "
+                  f"{len(failed_queries)} queries sequentially")
+                
+    if not use_parallel:
+        # Original sequential processing (fallback for complete parallel failure)
+        latencies = []
+        for query, target in tqdm(zip(queries, targets), total=len(queries), desc=f"Evaluating {name} (sequential)"):
+            try:
+                start = time.time()
+                retrieved = retrieve_fn(query, top_k)
+                latencies.append(time.time() - start)
 
-    for query, target in tqdm(zip(queries, targets), total=len(queries), desc=f"Evaluating {name}"):
-        start = time.time()
-        retrieved = retrieve_fn(query, top_k)
-        latencies.append(time.time() - start)
+                for k in ks:
+                    top_k_results = retrieved[:k]
+                    if target in top_k_results:
+                        metrics[f"recall@{k}"] += 1
+                        rank = top_k_results.index(target) + 1
+                        metrics[f"mrr@{k}"] += 1 / rank
+                    relevance = [1 if doc == target else 0 for doc in top_k_results]
+                    if sum(relevance) > 0:
+                        ideal = sorted(relevance, reverse=True)
+                        ndcg = ndcg_score([ideal], [relevance])
+                        metrics[f"ndcg@{k}"] += ndcg
+            except Exception as e:
+                print(f"Query failed in sequential mode: {e}")
+                latencies.append(0.0)
 
-        for k in ks:
-            top_k_results = retrieved[:k]
-            if target in top_k_results:
-                metrics[f"recall@{k}"] += 1
-                rank = top_k_results.index(target) + 1
-                metrics[f"mrr@{k}"] += 1 / rank
-            relevance = [1 if doc == target else 0 for doc in top_k_results]
-            if sum(relevance) > 0:
-                ideal = sorted(relevance, reverse=True)
-                ndcg = ndcg_score([ideal], [relevance])
-                metrics[f"ndcg@{k}"] += ndcg
-
+    # Normalize metrics by number of queries
     n = len(queries)
     for k in ks:
         metrics[f"recall@{k}"] = round(metrics[f"recall@{k}"] / n, 4)

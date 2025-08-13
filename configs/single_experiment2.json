@@ -1,14 +1,23 @@
 {
     "experiments": [
         {
-            "name": "ms_marco_gpt_gpu2",
+            "name": "marco_t5_40k_parallel",
             "dataset": "ms_marco",
-            "config": "configs/benchmarks/shared/gpt.json",
+            "config": "configs/benchmarks/shared/t5_st_40k.json",
             "slurm_options": {
-                "time": "05:30:00",
-                "cpus_per_task": 4,
-                "mem": "16GB",
-                "exclude": "clippy"
+                "time": "08:00:00",
+                "cpus_per_task": 2,
+                "mem": "16GB"
+            }
+        },
+        {
+            "name": "marco_t5_st_extreme",
+            "dataset": "ms_marco",
+            "config": "configs/benchmarks/shared/t5_st_extreme.json",
+            "slurm_options": {
+                "time": "05:00:00",
+                "cpus_per_task": 2,
+                "mem": "16GB"
             }
         }
     ],

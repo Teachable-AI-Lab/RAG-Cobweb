@@ -18,16 +18,21 @@ class QQPBenchmark(BaseBenchmark):
         dataset = load_dataset("glue", "qqp", split=split)
 
         # Filter duplicates where label == 1
-        duplicates = [ex for ex in dataset if ex["label"] == 1]
+        duplicates = []
+        extra = []
+        for ex in dataset:
+            if ex["label"] == 1:
+                duplicates.append(ex)
+            else:
+                extra.append(ex["question2"])
 
         shuffle(duplicates)
         sampled = randsample(duplicates, min(subset_size, len(duplicates)))
         queries = [ex["question1"] for ex in sampled[:target_size]]
         targets = [ex["question2"] for ex in sampled[:target_size]]
         corpus = [ex["question2"] for ex in sampled]
-
-        print("Length of Corpus:", len(corpus))
-        
+        if len(corpus) < subset_size:
+            corpus += randsample(extra, min(subset_size - len(corpus), len(extra)))
         return corpus, queries, targets
 
 

@@ -4,5 +4,6 @@
     "split": "validation",
     "target_size": 500,
     "top_k": 10,
-    "compute": true
+    "compute": false,
+    "method":"scale"
 }
