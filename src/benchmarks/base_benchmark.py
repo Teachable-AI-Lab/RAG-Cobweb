@@ -15,7 +15,7 @@ from src.utils.benchmark_utils import (
     load_or_save_sentences, load_cobweb_model, load_pca_ica_model,
     setup_faiss, retrieve_faiss, retrieve_cobweb_basic,
     evaluate_retrieval, print_metrics_table, get_results_path,
-    setup_hnswlib, retrieve_hnswlib
+    setup_hnswlib, retrieve_hnswlib, setup_torch_dot, retrieve_torch_dot
 )
 
 
@@ -43,14 +43,18 @@ class BaseBenchmark(ABC):
     def get_benchmark_list(self, method: str = "all") -> List[str]:
         """Get list of benchmark methods to run."""
         if method == "all":
-            return ['FAISS', 'FAISS PCA + ICA', 'Cobweb Basic', 'Cobweb PCA + ICA']
+            return ['FAISS', 'Torch Dot', 'FAISS PCA + ICA', 'Torch PCA + ICA', 'Cobweb Basic', 'Cobweb PCA + ICA']
         elif method == "extra":
-            return ['FAISS', 'FAISS PCA + ICA', 'FAISS L2', 'FAISS L2 PCA + ICA', 
+            return ['FAISS', 'Torch Dot','FAISS PCA + ICA', 'Torch PCA + ICA', 'FAISS L2', 'FAISS L2 PCA + ICA', 
                    'HNSWLib', 'HNSWLib PCA + ICA', 'Cobweb Basic', 'Cobweb PCA + ICA']
         elif method == "cobweb":
             return ['Cobweb Basic', 'Cobweb PCA + ICA']
+        elif method == "cobweb_pca":
+            return ['Cobweb PCA + ICA']
+        elif method == "scale":
+            return ['FAISS', 'Cobweb PCA + ICA']
         else:
-            raise ValueError(f"Unknown method: {method}")
+            return []
     
     def setup_embeddings(self, corpus: List[str], queries: List[str], targets: List[str],
                         model_name: str, split: str, compute: bool, unique_id: str,
@@ -146,7 +150,13 @@ class BaseBenchmark(ABC):
                                             lambda q, k: retrieve_faiss(q, k, faiss_index, corpus), top_k))
             print(f"--- FAISS Metrics ---")
             print_metrics_table(results[-1], save_path=save_path)
-            
+        if 'Torch Dot' in get_benchmarks:
+            print(f"Setting up Torch Dot...")
+            torch_dot_corpus_embs = setup_torch_dot(corpus_embs)
+            results.append(evaluate_retrieval("Torch Dot", queries_embs, targets,
+                                            lambda q, k: retrieve_torch_dot(q, k, torch_dot_corpus_embs, corpus), top_k))
+            print(f"--- Torch Dot Metrics ---")
+            print_metrics_table(results[-1], save_path=save_path)
         if 'FAISS PCA + ICA' in get_benchmarks:
             print(f"Setting up FAISS with PCA + ICA...")
             faiss_pca_ica_index = setup_faiss(pca_ica_corpus_embs)
@@ -154,7 +164,13 @@ class BaseBenchmark(ABC):
                                             lambda q, k: retrieve_faiss(q, k, faiss_pca_ica_index, corpus), top_k))
             print(f"--- FAISS PCA + ICA Metrics ---")
             print_metrics_table(results[-1], save_path=save_path)
-            
+        if 'Torch PCA + ICA' in get_benchmarks:
+            print(f"Setting up Torch with PCA + ICA...")
+            torch_pca_ica_corpus_embs = setup_torch_dot(pca_ica_corpus_embs)
+            results.append(evaluate_retrieval("Torch PCA + ICA", pca_ica_queries_embs, targets,
+                                            lambda q, k: retrieve_torch_dot(q, k, torch_pca_ica_corpus_embs, corpus), top_k))
+            print(f"--- Torch PCA + ICA Metrics ---")
+            print_metrics_table(results[-1], save_path=save_path)
         if 'FAISS L2' in get_benchmarks:
             print(f"Setting up FAISS with L2 distance...")
             faiss_l2_index = setup_faiss(corpus_embs, index_type='l2')
@@ -197,6 +213,16 @@ class BaseBenchmark(ABC):
                                             lambda q, k: retrieve_cobweb_basic(q, k, cobweb), top_k))
             print(f"--- Cobweb Basic Metrics ---")
             print_metrics_table(results[-1], save_path=save_path)
+            if include_cobweb_fast:
+                print(f"--- Evaluating Cobweb Fast ---")
+                t = time.time()
+                cobweb.build_prediction_index()
+                print(f"--- Cobweb Constant Weighted Sum Index Built in {time.time() - t:.2f} seconds ---")
+                results.append(evaluate_retrieval("Cobweb Fast", queries_embs, targets,
+                                                lambda q, k: retrieve_cobweb_basic(q, k, cobweb, True), top_k))
+                print(f"--- Cobweb Constant Weighted Sum Metrics ---")
+                print_metrics_table(results[-1], save_path=save_path)
+
             
         if 'Cobweb PCA + ICA' in get_benchmarks:
             print(f"Setting up PCA + ICA Cobweb...")
@@ -205,11 +231,12 @@ class BaseBenchmark(ABC):
                 print(f"--- Evaluating PCA + ICA Fast ---")
                 t = time.time()
                 cobweb_pca_ica.build_prediction_index()
-                print(f"--- Cobweb PCA + ICA Fast Index Built in {time.time() - t:.2f} seconds ---")
+                print(f"--- Cobweb PCA + ICA Constant Weighted Sum Index Built in {time.time() - t:.2f} seconds ---")
                 results.append(evaluate_retrieval("Cobweb PCA + ICA Fast", pca_ica_queries_embs, targets,
                                                 lambda q, k: retrieve_cobweb_basic(q, k, cobweb_pca_ica, True), top_k))
-                print(f"--- Cobweb PCA + ICA Fast Metrics ---")
+                print(f"--- Cobweb PCA + ICA Constant Weighted Sum Metrics ---")
                 print_metrics_table(results[-1], save_path=save_path)
+
             print(f"Evaluating Cobweb PCA + ICA")
             results.append(evaluate_retrieval("Cobweb PCA + ICA", pca_ica_queries_embs, targets,
                                             lambda q, k: retrieve_cobweb_basic(q, k, cobweb_pca_ica), top_k))

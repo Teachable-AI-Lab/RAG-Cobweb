@@ -5,9 +5,9 @@
             "dataset": "ms_marco",
             "config": "configs/benchmarks/shared/gpt.json",
             "slurm_options": {
-                "time": "02:30:00",
+                "time": "03:30:00",
                 "mem": "16G",
-                "cpus_per_task": 2
+                "cpus_per_task": 3
             }
         },
         {
@@ -15,9 +15,9 @@
             "dataset": "ms_marco",
             "config": "configs/benchmarks/shared/bert.json",
             "slurm_options": {
-                "time": "02:30:00",
+                "time": "03:30:00",
                 "mem": "16G",
-                "cpus_per_task": 2
+                "cpus_per_task": 3
             }
         },
         {
@@ -25,9 +25,9 @@
             "dataset": "ms_marco",
             "config": "configs/benchmarks/shared/t5.json",
             "slurm_options": {
-                "time": "02:30:00",
+                "time": "03:30:00",
                 "mem": "16G",
-                "cpus_per_task": 2
+                "cpus_per_task": 3
             }
         }
     ],

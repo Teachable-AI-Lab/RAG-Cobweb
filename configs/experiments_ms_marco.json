@@ -1,9 +1,9 @@
 {
     "experiments": [
         {
-            "name": "ms_marco_roberta_small",
+            "name": "marco_roberta_small",
             "dataset": "ms_marco",
-            "config": "configs/benchmarks/shared/st_default.json",
+            "config": "configs/benchmarks/shared/roberta_st_default.json",
             "slurm_options": {
                 "time": "01:30:00",
                 "mem": "16G",
@@ -11,9 +11,9 @@
             }
         },
         {
-            "name": "ms_marco_roberta_medium",
+            "name": "marco_roberta_medium",
             "dataset": "ms_marco",
-            "config": "configs/benchmarks/shared/st_medium.json",
+            "config": "configs/benchmarks/shared/roberta_st_medium.json",
             "slurm_options": {
                 "time": "02:00:00",
                 "mem": "20G",
@@ -21,9 +21,9 @@
             }
         },
         {
-            "name": "ms_marco_roberta_large",
+            "name": "marco_roberta_large",
             "dataset": "ms_marco",
-            "config": "configs/benchmarks/shared/st_large.json",
+            "config": "configs/benchmarks/shared/roberta_st_large.json",
             "slurm_options": {
                 "time": "02:30:00",
                 "mem": "20G",
@@ -31,11 +31,51 @@
             }
         },
         {
-            "name": "ms_marco_roberta_extreme",
+            "name": "marco_roberta_extreme",
             "dataset": "ms_marco",
-            "config": "configs/benchmarks/shared/st_extreme.json",
+            "config": "configs/benchmarks/shared/roberta_st_extreme.json",
             "slurm_options": {
-                "time": "04:30:00",
+                "time": "04:00:00",
+                "mem": "20G",
+                "cpus_per_task": 2
+            }
+        },
+        {
+            "name": "marco_t5_st_small",
+            "dataset": "ms_marco",
+            "config": "configs/benchmarks/shared/t5_st_default.json",
+            "slurm_options": {
+                "time": "01:30:00",
+                "mem": "16G",
+                "cpus_per_task": 2
+            }
+        },
+        {
+            "name": "marco_t5_st_medium",
+            "dataset": "ms_marco",
+            "config": "configs/benchmarks/shared/t5_st_medium.json",
+            "slurm_options": {
+                "time": "02:00:00",
+                "mem": "20G",
+                "cpus_per_task": 2
+            }
+        },
+        {
+            "name": "marco_t5_st_large",
+            "dataset": "ms_marco",
+            "config": "configs/benchmarks/shared/t5_st_large.json",
+            "slurm_options": {
+                "time": "03:30:00",
+                "mem": "20G",
+                "cpus_per_task": 2
+            }
+        },
+        {
+            "name": "marco_t5_st_extreme",
+            "dataset": "ms_marco",
+            "config": "configs/benchmarks/shared/t5_st_extreme.json",
+            "slurm_options": {
+                "time": "05:30:00",
                 "mem": "20G",
                 "cpus_per_task": 2
             }

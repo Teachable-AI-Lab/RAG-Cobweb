@@ -11,6 +11,8 @@ import hashlib
 from tqdm import tqdm
 from tabulate import tabulate
 from typing import List, Dict, Any, Tuple, Optional, Callable
+from multiprocessing import Pool, cpu_count
+from functools import partial
 
 from transformers import (
     AutoTokenizer, T5EncoderModel, AutoModel,
@@ -18,6 +20,7 @@ from transformers import (
     DPRQuestionEncoderTokenizer, DPRContextEncoderTokenizer
 )
 import torch
+from torch.utils.data import DataLoader, Dataset
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics import ndcg_score
 
@@ -47,6 +50,18 @@ MODEL_TYPE_MAPPING = {
     # GPT2 models
     "openai-community/gpt2": {"type": "transformer", "model_class": AutoModel, "pooling": "mean", "add_pad_token": True},
 }
+
+
+class TextDataset(Dataset):
+    """Simple dataset for text embeddings with GPU support."""
+    def __init__(self, texts: List[str]):
+        self.texts = texts
+    
+    def __len__(self):
+        return len(self.texts)
+    
+    def __getitem__(self, idx):
+        return self.texts[idx]
 
 
 def get_model_config(model_name: str) -> dict:
@@ -193,6 +208,68 @@ def get_results_path(model_name: str, dataset: str, split: str, unique_id: str) 
     return f"outputs/{dataset}/benchmark_{model_name}_{split}_{unique_id}.txt"
 
 
+def _compute_embeddings_gpu(texts: List[str], tokenizer, model, model_config: dict, batch_size: int = 32) -> np.ndarray:
+    """Compute embeddings using GPU with DataLoader for efficient batch processing."""
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = model.to(device)
+    model.eval()
+    
+    # Create dataset and dataloader with CPU workers
+    dataset = TextDataset(texts)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False, 
+                          num_workers=min(8, len(os.sched_getaffinity(0))))
+    
+    all_embeddings = []
+    pooling = model_config["pooling"]
+    
+    with torch.no_grad():
+        for batch_texts in tqdm(dataloader, desc="Computing embeddings"):
+            inputs = tokenizer(batch_texts, return_tensors='pt', padding=True, 
+                             truncation=True, max_length=512)
+            inputs = {k: v.to(device) for k, v in inputs.items()}
+            
+            outputs = model(**inputs)
+            last_hidden = outputs.hidden_states[-1]
+            
+            if pooling == "cls":
+                batch_embeddings = last_hidden[:, 0, :].cpu()
+            elif pooling == "mean":
+                mask = inputs['attention_mask'].unsqueeze(-1).expand(last_hidden.size()).float()
+                sum_hidden = (last_hidden * mask).sum(dim=1)
+                divisor = mask.sum(dim=1).clamp(min=1e-9)
+                batch_embeddings = (sum_hidden / divisor).cpu()
+            else:
+                raise ValueError(f"Unknown pooling strategy: {pooling}")
+            
+            all_embeddings.append(batch_embeddings.numpy())
+    
+    return np.vstack(all_embeddings)
+
+
+def _compute_embeddings_cpu(texts: List[str], tokenizer, model, model_config: dict) -> np.ndarray:
+    """Compute embeddings using CPU (original implementation)."""
+    model.eval()
+    inputs = tokenizer(texts, return_tensors='pt', padding=True, truncation=True, max_length=512)
+    
+    with torch.no_grad():
+        outputs = model(**inputs)
+    
+    pooling = model_config["pooling"]
+    if pooling == "cls":
+        last_hidden = outputs.hidden_states[-1]
+        embeddings = last_hidden[:, 0, :].numpy()
+    elif pooling == "mean":
+        last_hidden = outputs.hidden_states[-1]
+        mask = inputs['attention_mask'].unsqueeze(-1).expand(last_hidden.size()).float()
+        sum_hidden = (last_hidden * mask).sum(dim=1)
+        divisor = mask.sum(dim=1).clamp(min=1e-9)
+        embeddings = (sum_hidden / divisor).cpu().numpy()
+    else:
+        raise ValueError(f"Unknown pooling strategy: {pooling}")
+    
+    return embeddings
+
+
 def load_or_compute_embeddings(texts: List[str], model_name: str, dataset: str, split: str, 
                              compute: bool = False, unique_id: Optional[str] = None) -> np.ndarray:
     """
@@ -220,8 +297,11 @@ def load_or_compute_embeddings(texts: List[str], model_name: str, dataset: str, 
     
     model_config = get_model_config(model_name)
     print(f"Using model config: {model_config} for model: {model_name}")
+    
     if model_config["type"] == "transformer":
         tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+        if 't5' in model_name.lower():
+            texts = ["Summarize :" + text for text in texts]
         
         # Handle GPT2 pad token
         if model_config.get("add_pad_token", False) and tokenizer.pad_token is None:
@@ -229,30 +309,19 @@ def load_or_compute_embeddings(texts: List[str], model_name: str, dataset: str, 
             
         model_class = model_config["model_class"]
         model = model_class.from_pretrained(model_name, trust_remote_code=True, output_hidden_states=True)
-        model.eval()
-        inputs = tokenizer(texts, return_tensors='pt', padding=True, truncation=True, max_length=512)
-        with torch.no_grad():
-            outputs = model(**inputs)
         
-        # Apply pooling strategy
-        pooling = model_config["pooling"]
-        if pooling == "cls":
-            last_hidden = outputs.hidden_states[-1]
-            embeddings = last_hidden[:, 0, :].numpy()  # CLS token
-        elif pooling == "mean":
-            last_hidden = outputs.hidden_states[-1]
-            mask = inputs['attention_mask'].unsqueeze(-1).expand(last_hidden.size()).float()
-            sum_hidden = (last_hidden * mask).sum(dim=1)
-            divisor = mask.sum(dim=1).clamp(min=1e-9)
-            embeddings = (sum_hidden / divisor).cpu().numpy()
-        else:
-            raise ValueError(f"Unknown pooling strategy: {pooling}")
+        # Choose GPU or CPU computation based on availability
+        print("Using GPU with CPU workers for embedding computation")
+        embeddings = _compute_embeddings_gpu(texts, tokenizer, model, model_config)
             
     else:
         # print(f"Unknown model type {model_config['type']}, falling back to SentenceTransformer")
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        print(f"Using {device} device")
         model = SentenceTransformer(model_name, trust_remote_code=True)
-        embeddings = model.encode(texts, convert_to_numpy=True, normalize_embeddings=True)
-    
+        model.to(device)
+        embeddings = model.encode(texts, convert_to_numpy=True, normalize_embeddings=True, show_progress_bar=True, batch_size=256)
+
     print(f"Computed embeddings shape: {embeddings.shape}")
     if len(embeddings.shape) != 2:
         raise ValueError(f"Embeddings for {model_name} should be 2D, got {embeddings.shape}. Check the model and input texts.")
@@ -481,6 +550,11 @@ def setup_hnswlib(corpus_embs: np.ndarray) -> hnswlib.Index:
     return index
 
 
+def setup_torch_dot(corpus_embs: np.ndarray) -> torch.Tensor:
+    """Setup torch tensor for direct dot product similarity computation."""
+    return torch.from_numpy(corpus_embs).float()
+
+
 # === Retrieval Functions ===
 
 def retrieve_cobweb_basic(query_emb: np.ndarray, k: int, cobweb: CobwebWrapper, use_fast: bool = False) -> List[str]:
@@ -509,6 +583,21 @@ def retrieve_hnswlib(query_emb: np.ndarray, k: int, index: hnswlib.Index, corpus
     return [corpus[i] for i in ids[0]]
 
 
+def retrieve_torch_dot(query_emb: np.ndarray, k: int, corpus_embs: torch.Tensor, corpus: List[str]) -> List[str]:
+    """Retrieve using PyTorch matrix multiplication for dot product similarity."""
+    # Convert query to torch tensor
+    query_tensor = torch.from_numpy(query_emb).float()
+    
+    # Compute dot product similarities using matrix multiplication
+    # corpus_embs is (num_docs, embedding_dim), query_tensor is (embedding_dim,)
+    similarities = torch.matmul(corpus_embs, query_tensor)
+    
+    # Get top-k indices in descending order
+    _, top_k_indices = torch.topk(similarities, k, largest=True)
+    
+    return [corpus[i.item()] for i in top_k_indices]
+
+
 # === Evaluation Functions ===
 
 def get_eval_ks(top_k: int) -> List[int]:
@@ -517,10 +606,95 @@ def get_eval_ks(top_k: int) -> List[int]:
     return sorted([k for k in base if k <= top_k])
 
 
-def evaluate_retrieval(name: str, queries: List[np.ndarray], targets: List[str], 
-                      retrieve_fn: Callable, top_k: int = 10) -> Dict[str, Any]:
+def _evaluate_single_query(args):
     """
-    Evaluate a retrieval method using multiple metrics.
+    Helper function to evaluate a single query-target pair.
+    This function is designed to be used with multiprocessing.
+    
+    Args:
+        args: Tuple containing (query, target, retrieve_fn, top_k, ks)
+    
+    Returns:
+        Tuple containing (query_metrics, latency, success, error_msg)
+        If success=False, query_metrics and latency will be None
+    """
+    query, target, retrieve_fn, top_k, ks = args
+    
+    try:
+        # Initialize metrics for this query
+        query_metrics = {f"recall@{k}": 0 for k in ks}
+        query_metrics.update({f"mrr@{k}": 0 for k in ks})
+        query_metrics.update({f"ndcg@{k}": 0 for k in ks})
+        
+        # Measure retrieval time
+        start = time.time()
+        retrieved = retrieve_fn(query, top_k)
+        latency = time.time() - start
+        
+        # Calculate metrics for each k
+        for k in ks:
+            top_k_results = retrieved[:k]
+            if target in top_k_results:
+                query_metrics[f"recall@{k}"] = 1
+                rank = top_k_results.index(target) + 1
+                query_metrics[f"mrr@{k}"] = 1 / rank
+            
+            relevance = [1 if doc == target else 0 for doc in top_k_results]
+            if sum(relevance) > 0:
+                ideal = sorted(relevance, reverse=True)
+                ndcg = ndcg_score([ideal], [relevance])
+                query_metrics[f"ndcg@{k}"] = ndcg
+        
+        return query_metrics, latency, True, None
+        
+    except Exception as e:
+        # Return error information for fallback processing
+        return None, None, False, str(e)
+
+
+def _evaluate_single_query_sequential(query, target, retrieve_fn, top_k, ks):
+    """
+    Sequential fallback function to evaluate a single query-target pair.
+    Used when parallel processing fails for specific queries.
+    
+    Args:
+        query: Query embedding
+        target: Target string (ground truth)
+        retrieve_fn: Function to retrieve results
+        top_k: Maximum number of results to retrieve
+        ks: List of k values to evaluate
+    
+    Returns:
+        Tuple containing (query_metrics, latency)
+    """
+    query_metrics = {f"recall@{k}": 0 for k in ks}
+    query_metrics.update({f"mrr@{k}": 0 for k in ks})
+    query_metrics.update({f"ndcg@{k}": 0 for k in ks})
+    
+    start = time.time()
+    retrieved = retrieve_fn(query, top_k)
+    latency = time.time() - start
+    
+    for k in ks:
+        top_k_results = retrieved[:k]
+        if target in top_k_results:
+            query_metrics[f"recall@{k}"] = 1
+            rank = top_k_results.index(target) + 1
+            query_metrics[f"mrr@{k}"] = 1 / rank
+        
+        relevance = [1 if doc == target else 0 for doc in top_k_results]
+        if sum(relevance) > 0:
+            ideal = sorted(relevance, reverse=True)
+            ndcg = ndcg_score([ideal], [relevance])
+            query_metrics[f"ndcg@{k}"] = ndcg
+    
+    return query_metrics, latency
+
+
+def evaluate_retrieval(name: str, queries: List[np.ndarray], targets: List[str], 
+                      retrieve_fn: Callable, top_k: int = 10, use_parallel: bool = False) -> Dict[str, Any]:
+    """
+    Evaluate a retrieval method using multiple metrics with optional parallelization and error handling.
     
     Args:
         name: Name of the retrieval method
@@ -528,6 +702,7 @@ def evaluate_retrieval(name: str, queries: List[np.ndarray], targets: List[str],
         targets: List of target strings (ground truth)
         retrieve_fn: Function to retrieve results given (query, k)
         top_k: Maximum number of results to retrieve
+        use_parallel: Whether to use parallel processing (default: True)
     
     Returns:
         Dictionary containing evaluation metrics
@@ -543,25 +718,92 @@ def evaluate_retrieval(name: str, queries: List[np.ndarray], targets: List[str],
         f"ndcg@{k}": 0 for k in ks
     })
 
-    latencies = []
+    if use_parallel:
+        # Prepare arguments for parallel processing
+        args_list = [(query, target, retrieve_fn, top_k, ks) for query, target in zip(queries, targets)]
+        
+        # Use all available CPU cores
+        num_workers = cpu_count()
+        print(f"Using {num_workers} parallel workers for evaluation")
+        
+        try:
+            with Pool(processes=num_workers) as pool:
+                # Process all queries in parallel with progress bar
+                results = list(tqdm(
+                    pool.imap(_evaluate_single_query, args_list), 
+                    total=len(queries), 
+                    desc=f"Evaluating {name} (parallel)"
+                ))
+        except Exception as e:
+            print(f"Parallel processing failed entirely: {e}")
+            print("Falling back to sequential processing for all queries")
+            use_parallel = False
+        
+        if use_parallel:  # Only process results if parallel processing succeeded
+            # Separate successful and failed results
+            successful_results = []
+            failed_queries = []
+            latencies = []
+            
+            for i, (query_metrics, latency, success, error_msg) in enumerate(results):
+                if success:
+                    successful_results.append((query_metrics, latency))
+                    latencies.append(latency)
+                    # Add to metrics
+                    for k in ks:
+                        metrics[f"recall@{k}"] += query_metrics[f"recall@{k}"]
+                        metrics[f"mrr@{k}"] += query_metrics[f"mrr@{k}"]
+                        metrics[f"ndcg@{k}"] += query_metrics[f"ndcg@{k}"]
+                else:
+                    failed_queries.append((i, queries[i], targets[i], error_msg))
+            
+            # Process failed queries sequentially
+            if failed_queries:
+                print(f"Processing {len(failed_queries)} failed queries sequentially...")
+                for idx, query, target, error_msg in tqdm(failed_queries, desc="Processing failed queries"):
+                    try:
+                        query_metrics, latency = _evaluate_single_query_sequential(
+                            query, target, retrieve_fn, top_k, ks
+                        )
+                        latencies.append(latency)
+                        # Add to metrics
+                        for k in ks:
+                            metrics[f"recall@{k}"] += query_metrics[f"recall@{k}"]
+                            metrics[f"mrr@{k}"] += query_metrics[f"mrr@{k}"]
+                            metrics[f"ndcg@{k}"] += query_metrics[f"ndcg@{k}"]
+                    except Exception as fallback_error:
+                        print(f"Query {idx} failed even in sequential mode: {fallback_error}")
+                        # Add zero metrics and default latency for completely failed queries
+                        latencies.append(0.0)
+            
+            print(f"Successfully processed {len(successful_results)} queries in parallel, "
+                  f"{len(failed_queries)} queries sequentially")
+                
+    if not use_parallel:
+        # Original sequential processing (fallback for complete parallel failure)
+        latencies = []
+        for query, target in tqdm(zip(queries, targets), total=len(queries), desc=f"Evaluating {name} (sequential)"):
+            try:
+                start = time.time()
+                retrieved = retrieve_fn(query, top_k)
+                latencies.append(time.time() - start)
 
-    for query, target in tqdm(zip(queries, targets), total=len(queries), desc=f"Evaluating {name}"):
-        start = time.time()
-        retrieved = retrieve_fn(query, top_k)
-        latencies.append(time.time() - start)
+                for k in ks:
+                    top_k_results = retrieved[:k]
+                    if target in top_k_results:
+                        metrics[f"recall@{k}"] += 1
+                        rank = top_k_results.index(target) + 1
+                        metrics[f"mrr@{k}"] += 1 / rank
+                    relevance = [1 if doc == target else 0 for doc in top_k_results]
+                    if sum(relevance) > 0:
+                        ideal = sorted(relevance, reverse=True)
+                        ndcg = ndcg_score([ideal], [relevance])
+                        metrics[f"ndcg@{k}"] += ndcg
+            except Exception as e:
+                print(f"Query failed in sequential mode: {e}")
+                latencies.append(0.0)
 
-        for k in ks:
-            top_k_results = retrieved[:k]
-            if target in top_k_results:
-                metrics[f"recall@{k}"] += 1
-                rank = top_k_results.index(target) + 1
-                metrics[f"mrr@{k}"] += 1 / rank
-            relevance = [1 if doc == target else 0 for doc in top_k_results]
-            if sum(relevance) > 0:
-                ideal = sorted(relevance, reverse=True)
-                ndcg = ndcg_score([ideal], [relevance])
-                metrics[f"ndcg@{k}"] += ndcg
-
+    # Normalize metrics by number of queries
     n = len(queries)
     for k in ks:
         metrics[f"recall@{k}"] = round(metrics[f"recall@{k}"] / n, 4)

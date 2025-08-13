@@ -89,6 +89,7 @@ srun python {python_script} --config {config_path}
 echo "Experiment completed: {exp_name}"
 echo "Time: $(date)"
 """
+    print(script_content)
     
     return script_content
 

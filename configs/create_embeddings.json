@@ -1,47 +1,51 @@
 {
     "experiments": [
         {
-            "name": "qqp_20k_roberta",
+            "name": "qqp_20k_roberta_embeddings",
             "dataset": "qqp",
             "config": "configs/benchmarks/shared/roberta_st_20k.json",
             "slurm_options": {
-                "time": "05:00:00",
-                "cpus_per_task": 2,
+                "time": "00:20:00",
+                "cpus_per_task": 8,
+                "gpus-per-node": "a40",
                 "mem": "16GB",
-                "exclude":"clippy"
+                "exclude":"spot,heistotron"
             }
         },
         {
-            "name": "qqp_40k_roberta",
+            "name": "qqp_40k_roberta_embeddings",
             "dataset": "qqp",
             "config": "configs/benchmarks/shared/roberta_st_40k.json",
             "slurm_options": {
-                "time": "08:00:00",
-                "cpus_per_task": 2,
+                "time": "00:10:00",
+                "cpus_per_task": 8,
+                "gpus-per-node": "a40",
                 "mem": "16GB",
-                "exclude":"clippy"
+                "exclude":"spot,heistotron"
             }
         },
         {
-            "name": "qqp_20k_t5",
+            "name": "qqp_20k_t5_embeddings",
             "dataset": "qqp",
             "config": "configs/benchmarks/shared/t5_st_20k.json",
             "slurm_options": {
-                "time": "05:00:00",
-                "cpus_per_task": 2,
+                "time": "00:10:00",
+                "cpus_per_task": 8,
+                "gpus-per-node": "a40",
                 "mem": "16GB",
-                "exclude":"clippy"
+                "exclude":"spot,heistotron"
             }
         },
         {
-            "name": "qqp_40k_t5",
+            "name": "qqp_40k_t5_embeddings",
             "dataset": "qqp",
             "config": "configs/benchmarks/shared/t5_st_40k.json",
             "slurm_options": {
-                "time": "08:00:00",
-                "cpus_per_task": 2,
+                "time": "00:20:00",
+                "cpus_per_task": 8,
+                "gpus-per-node": "a40",
                 "mem": "16GB",
-                "exclude":"clippy"
+                "exclude":"spot,heistotron"
             }
         }
     ],
