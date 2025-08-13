@@ -105,7 +105,7 @@ def run_msmarco_benchmark(model_name="facebook/dpr-question_encoder-single-nq-ba
     print(f"--- Cobweb PCA + ICA Metrics ---")
     print_metrics_table(results[-1], save_path=save_path)
 
-    cobweb_pca_ica.visualize_subtrees("outputs/visualizations_ms_marco")
+    cobweb_pca_ica.visualize_subtrees("outputs/visualizations_ms_marco", num_leaves=4)
 
     return results
 
