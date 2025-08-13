@@ -1,0 +1,93 @@
+{
+    "experiments": [
+        {
+            "name": "qqp_roberta_small",
+            "dataset": "qqp",
+            "config": "configs/benchmarks/shared/roberta_st_default.json",
+            "slurm_options": {
+                "time": "01:30:00",
+                "mem": "16G",
+                "cpus_per_task": 2
+            }
+        },
+        {
+            "name": "qqp_roberta_medium",
+            "dataset": "qqp",
+            "config": "configs/benchmarks/shared/roberta_st_medium.json",
+            "slurm_options": {
+                "time": "02:00:00",
+                "mem": "20G",
+                "cpus_per_task": 2
+            }
+        },
+        {
+            "name": "qqp_roberta_large",
+            "dataset": "qqp",
+            "config": "configs/benchmarks/shared/roberta_st_large.json",
+            "slurm_options": {
+                "time": "02:30:00",
+                "mem": "20G",
+                "cpus_per_task": 2
+            }
+        },
+        {
+            "name": "qqp_roberta_extreme",
+            "dataset": "qqp",
+            "config": "configs/benchmarks/shared/roberta_st_extreme.json",
+            "slurm_options": {
+                "time": "04:00:00",
+                "mem": "20G",
+                "cpus_per_task": 2
+            }
+        },
+        {
+            "name": "qqp_t5_st_small",
+            "dataset": "qqp",
+            "config": "configs/benchmarks/shared/t5_st_default.json",
+            "slurm_options": {
+                "time": "01:30:00",
+                "mem": "16G",
+                "cpus_per_task": 2
+            }
+        },
+        {
+            "name": "qqp_t5_st_medium",
+            "dataset": "qqp",
+            "config": "configs/benchmarks/shared/t5_st_medium.json",
+            "slurm_options": {
+                "time": "02:00:00",
+                "mem": "20G",
+                "cpus_per_task": 2
+            }
+        },
+        {
+            "name": "qqp_t5_st_large",
+            "dataset": "qqp",
+            "config": "configs/benchmarks/shared/t5_st_large.json",
+            "slurm_options": {
+                "time": "02:30:00",
+                "mem": "20G",
+                "cpus_per_task": 2
+            }
+        },
+        {
+            "name": "qqp_t5_st_extreme",
+            "dataset": "qqp",
+            "config": "configs/benchmarks/shared/t5_st_extreme.json",
+            "slurm_options": {
+                "time": "04:00:00",
+                "mem": "20G",
+                "cpus_per_task": 2
+            }
+        }
+    ],
+    "default_slurm_options": {
+        "partition": "tail-lab",
+        "nodes": 1,
+        "ntasks_per_node": 1,
+        "cpus_per_task": 2,
+        "mem": "16G",
+        "qos": "short",
+        "exclude": "clippy"
+    }
+}

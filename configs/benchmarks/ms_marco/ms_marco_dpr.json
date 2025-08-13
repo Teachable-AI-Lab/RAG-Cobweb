@@ -1,0 +1,8 @@
+{
+    "model_name": "facebook/dpr-question_encoder-single-nq-base",
+    "subset_size": 7500,
+    "split": "validation",
+    "target_size": 750,
+    "top_k": 10,
+    "compute": false
+}

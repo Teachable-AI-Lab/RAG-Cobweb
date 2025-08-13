@@ -120,7 +120,7 @@ class CobwebTorchTree(object):
         # after full tree built:
         self._build_node_map()
 
-    def ifit(self, instance, sentence_id=None):
+    def ifit(self, instance):
         """
         Incrementally fit a new instance into the tree and return its resulting
         concept.
@@ -138,9 +138,9 @@ class CobwebTorchTree(object):
         .. seealso:: :meth:`CobwebTree.cobweb`
         """
         with torch.no_grad():
-            return self.cobweb(instance, sentence_id=sentence_id)
+            return self.cobweb(instance)
 
-    def cobweb(self, instance, sentence_id=None):
+    def cobweb(self, instance):
         """
         The core cobweb algorithm used in fitting and categorization.
 
@@ -210,7 +210,7 @@ class CobwebTorchTree(object):
                     _, best_action = current.get_best_operation(instance, best1,
                                                                 best2, best1_pu)
                 else:
-                    best_action = "best"
+                    best_action = "new"
 
                 # print(best_action)
                 if best_action == 'best':
@@ -230,7 +230,6 @@ class CobwebTorchTree(object):
                     raise Exception('Best action choice "' + best_action +
                                     '" not a recognized option. This should be'
                                     ' impossible...')
-        current.sentence_id = sentence_id
         return current
 
     def _cobweb_categorize(self, instance, use_best, greedy, max_nodes, retrieve_k=None):
@@ -265,25 +264,25 @@ class CobwebTorchTree(object):
             if nodes_visited >= max_nodes:
                 break
 
-            if hasattr(curr, "sentence_id"):
-                heapq.heappush(retrieved, (score, random(), curr))
+            if curr.sentence_id:
+                heapq.heappush(retrieved, (len(retrieved), random(), curr))
 
             if retrieve_k is not None and len(retrieved) == retrieve_k:
                 break # TODO can replace this with a part at the end optionally!
 
             if len(curr.children) > 0:
                 ll_children_unnorm = torch.zeros(len(curr.children))
-                for i, c in enumerate(curr.children):
-                    log_prob = c.log_prob(instance)
-                    ll_children_unnorm[i] = (log_prob + math.log(c.count) - math.log(curr.count))
-                log_p_of_x = torch.logsumexp(ll_children_unnorm, dim=0)
+                # for i, c in enumerate(curr.children):
+                #     log_prob = c.log_prob(instance)
+                #     ll_children_unnorm[i] = (log_prob + math.log(c.count) - math.log(curr.count))
+                # log_p_of_x = torch.logsumexp(ll_children_unnorm, dim=0)
 
                 for i, c in enumerate(curr.children):
-                    child_ll = ll_children_unnorm[i] - log_p_of_x + curr_ll
+                    # child_ll = ll_children_unnorm[i] - log_p_of_x + curr_ll
                     child_ll_inst = c.log_prob(instance)
-                    score = child_ll + child_ll_inst # p(c|x) * p(x|c)
-                    # score = child_ll # p(c|x)
-                    heapq.heappush(queue, (-score, -child_ll, random(), c))
+                    child_score =  child_ll_inst #score + child_ll 
+                    # child_score = child_ll + child_ll_inst # p(c|x) * p(x|c)
+                    heapq.heappush(queue, (-child_score, score, random(), c))
 
         if retrieve_k is None:
             return best if use_best else curr

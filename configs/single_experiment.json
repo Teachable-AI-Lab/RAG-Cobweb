@@ -1,0 +1,53 @@
+{
+    "experiments": [
+        {
+            "name": "qqp_20k_roberta",
+            "dataset": "qqp",
+            "config": "configs/benchmarks/shared/roberta_st_20k.json",
+            "slurm_options": {
+                "time": "05:00:00",
+                "cpus_per_task": 2,
+                "mem": "16GB",
+                "exclude":"clippy"
+            }
+        },
+        {
+            "name": "qqp_40k_roberta",
+            "dataset": "qqp",
+            "config": "configs/benchmarks/shared/roberta_st_40k.json",
+            "slurm_options": {
+                "time": "08:00:00",
+                "cpus_per_task": 2,
+                "mem": "16GB",
+                "exclude":"clippy"
+            }
+        },
+        {
+            "name": "qqp_20k_t5",
+            "dataset": "qqp",
+            "config": "configs/benchmarks/shared/t5_st_20k.json",
+            "slurm_options": {
+                "time": "05:00:00",
+                "cpus_per_task": 2,
+                "mem": "16GB",
+                "exclude":"clippy"
+            }
+        },
+        {
+            "name": "qqp_40k_t5",
+            "dataset": "qqp",
+            "config": "configs/benchmarks/shared/t5_st_40k.json",
+            "slurm_options": {
+                "time": "08:00:00",
+                "cpus_per_task": 2,
+                "mem": "16GB",
+                "exclude":"clippy"
+            }
+        }
+    ],
+    "default_slurm_options": {
+        "partition": "tail-lab",
+        "nodes": 1,
+        "qos": "short"
+    }
+}
