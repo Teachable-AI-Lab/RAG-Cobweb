@@ -1,0 +1,9 @@
+{
+    "model_name": "openai-community/gpt2",
+    "subset_size": 5000,
+    "split": "validation",
+    "target_size": 500,
+    "top_k": 5,
+    "compute": true,
+    "method" : "extra"
+}
