@@ -527,7 +527,7 @@ class CobwebWrapper:
         """
         return len(self.sentences)
 
-    def _visualize_grandparent_tree(self, tree_root, sentences, output_dir="grandparent_trees"):
+    def _visualize_grandparent_tree(self, tree_root, sentences, output_dir="grandparent_trees", num_leaves=6):
 
         os.makedirs(output_dir, exist_ok=True)
 
@@ -605,7 +605,7 @@ class CobwebWrapper:
                 return  # No valid subtree to render
 
             # Split leaves into batches of 6
-            leaf_batches = [all_leaves[i:i + 6] for i in range(0, len(all_leaves), 6)]
+            leaf_batches = [all_leaves[i:i + num_leaves] for i in range(0, len(all_leaves), 6)]
 
             for batch_index, batch in enumerate(leaf_batches):
                 dot = Digraph(comment="Grandparent Subtree", format='png')
@@ -657,5 +657,5 @@ class CobwebWrapper:
 
 
 
-    def visualize_subtrees(self, directory):
-        self._visualize_grandparent_tree(self.tree.root, self.sentences, directory)
+    def visualize_subtrees(self, directory, num_leaves=6):
+        self._visualize_grandparent_tree(self.tree.root, self.sentences, directory, num_leaves)

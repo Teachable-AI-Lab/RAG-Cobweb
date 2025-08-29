@@ -74,7 +74,7 @@ def run_qqp_benchmark(model_name, subset_size=7500, split="validation", target_s
     print(f"--- Cobweb PCA + ICA Metrics ---")
     print_metrics_table(results[-1], save_path=save_path)
 
-    cobweb_pca_ica.visualize_subtrees("outputs/visualizations_qqp")
+    cobweb_pca_ica.visualize_subtrees("outputs/visualizations_qqp", num_leaves=4)
 
     return results
 
