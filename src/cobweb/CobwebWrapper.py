@@ -484,19 +484,22 @@ class CobwebWrapper:
         else:
             data = json_data
 
-        # Load tree
-        tree = CobwebTorchTree(1024)
-        print("Loading tree from JSON...")
-        tree.load_json(json.dumps(data["tree"]))
-
         # Initialize wrapper with minimal setup
         wrapper = CobwebWrapper.__new__(CobwebWrapper)
+        wrapper.device = data.get("device", "cuda" if torch.cuda.is_available() else "cpu")
+
+        # Load tree
+        sample_emb = self.encode_func(["test"])
+        embedding_shape = sample_emb.shape[1:]
+        tree = CobwebTorchTree(embedding_shape, wrapper.device) # TODO needs to be dumped with initial stuff!
+        print("Loading tree from JSON...")
+        tree.load_json(json.dumps(data["tree"]))
+        
         wrapper.tree = tree
         wrapper.encode_func = encode_func
 
         # Restore attributes
         wrapper.sentences = data.get("sentences", [])
-        wrapper.device = data.get("device", "cuda" if torch.cuda.is_available() else "cpu")
         wrapper.max_init_search = data.get("max_init_search", 100000)
 
         # Initialize prediction index attributes
