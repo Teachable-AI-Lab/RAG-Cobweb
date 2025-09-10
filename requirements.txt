@@ -67,3 +67,6 @@ faiss-cpu
 ir-datasets
 annoy
 hnswlib
+matplotlib
+seaborn
+protobuf

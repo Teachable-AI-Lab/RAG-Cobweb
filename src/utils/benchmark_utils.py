@@ -46,7 +46,12 @@ MODEL_TYPE_MAPPING = {
     # BERT models
     "bert-base-uncased": {"type": "transformer", "model_class": AutoModel, "pooling": "cls"},
     "bert-large-uncased": {"type": "transformer", "model_class": AutoModel, "pooling": "cls"},
-
+    "SupstarZh/whitenedcse-bert-large": {
+        "type": "transformer-repo",
+        "model_class": AutoModel,
+        "repoid": "unsup-whitenedcse-bert-large",
+        "pooling": "cls"
+    },
     # GPT2 models
     "openai-community/gpt2": {"type": "transformer", "model_class": AutoModel, "pooling": "mean", "add_pad_token": True},
 }
@@ -90,6 +95,8 @@ def get_model_config(model_name: str) -> dict:
         return {"type": "transformer", "model_class": AutoModel, "pooling": "cls"}
     elif "gpt2" in model_lower:
         return {"type": "transformer", "model_class": AutoModel, "pooling": "mean", "add_pad_token": True}
+    elif "whitenedcse" in model_lower:
+        return {"type": "transformer-repo", "model_class": AutoModel, "repoid": "unsup-whitenedcse-bert-large", "pooling": "cls"}
     else:
         # Default to sentence transformer for unknown models
         return {"type": "sentence_transformer"}
@@ -313,7 +320,16 @@ def load_or_compute_embeddings(texts: List[str], model_name: str, dataset: str, 
         # Choose GPU or CPU computation based on availability
         print("Using GPU with CPU workers for embedding computation")
         embeddings = _compute_embeddings_gpu(texts, tokenizer, model, model_config)
-            
+    
+    elif model_config["type"] == "transformer-repo":
+        repo_id = model_name
+        subfolder = model_config["repoid"]
+        tokenizer = AutoTokenizer.from_pretrained(repo_id, subfolder=subfolder, trust_remote_code=True)
+        model_class = model_config["model_class"]
+        model = model_class.from_pretrained(repo_id, subfolder=subfolder, trust_remote_code=True, output_hidden_states=True)
+
+        embeddings = _compute_embeddings_gpu(texts, tokenizer, model, model_config)
+
     else:
         # print(f"Unknown model type {model_config['type']}, falling back to SentenceTransformer")
         device = "cuda" if torch.cuda.is_available() else "cpu"
