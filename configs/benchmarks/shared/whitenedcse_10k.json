@@ -3,6 +3,6 @@
     "subset_size": 10000,
     "split": "validation",
     "target_size": 2000,
-    "top_k": 10,
+    "top_k": 20,
     "compute": true
 }

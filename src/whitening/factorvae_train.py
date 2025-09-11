@@ -380,7 +380,7 @@ def parse_args():
     p.add_argument("--lr", type=float, default=1e-4)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--save-dir", type=str, default=None)
-    p.add_argument("--embed-model", type=str, default="sentence-transformers/paraphrase-roberta-base-v1")
+    p.add_argument("--embed-model", type=str, default="all-roberta-large-v1")
     p.add_argument("--max-embed-samples", type=int, default=None)
     p.add_argument("--msmarco-text-fields", type=str, default="query,passage",
                    help="Comma-separated fields to use from MS-MARCO (default 'query,passage'). You can pass a single field.")
