@@ -264,6 +264,36 @@ class CobwebWrapper:
         
         return results
 
+    def cobweb_rank_scores(self, input, is_embedding=False):
+        """
+        Differentiable: return raw scores for all leaves.
+        """
+        self.build_prediction_index()
+
+        if is_embedding:
+            x = input.to(self.device)  # already a torch tensor
+        else:
+            emb = self.encode_func([input])[0]
+            x = torch.tensor(emb, device=self.device)
+
+        if len(self._leaf_to_path_indices) == 0:
+            return torch.empty(0, device=self.device)
+
+        # Gaussian log-probs
+        diff_sq = (x.unsqueeze(0) - self._node_means) ** 2
+        node_log_probs = -0.5 * (
+            torch.log(self._node_vars).sum(dim=1)
+            + (diff_sq / self._node_vars).sum(dim=1)
+        )  # (num_nodes,)
+
+        # Aggregate along leaf paths
+        leaf_scores = torch.sparse.mm(
+            self._path_matrix, node_log_probs.unsqueeze(1)
+        ).squeeze(1)  # (num_leaves,)
+
+        return leaf_scores  # no top-k cut, differentiable
+
+
     def get_node_path_stats(self, sentence_id):
         """
         Get statistics for all nodes in the path from root to a specific leaf.
@@ -489,7 +519,7 @@ class CobwebWrapper:
         wrapper.device = data.get("device", "cuda" if torch.cuda.is_available() else "cpu")
 
         # Load tree
-        sample_emb = self.encode_func(["test"])
+        sample_emb = encode_func(["test"])
         embedding_shape = sample_emb.shape[1:]
         tree = CobwebTorchTree(embedding_shape, wrapper.device) # TODO needs to be dumped with initial stuff!
         print("Loading tree from JSON...")

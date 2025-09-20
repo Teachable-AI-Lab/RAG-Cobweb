@@ -89,11 +89,10 @@ embeddings.update(whitened_embeddings)
 # Load pretrained FactorVAE encoder
 # ----------------------------
 factorvae_ckpt_path = Path("factorvae_qqp_ckpts/factorvae_epoch20.pt")  # adjust path
-z_dim = 32  # match the trained FactorVAE
+z_dim = 392  # match the trained FactorVAE
 
 print(f"=== Loading pretrained FactorVAE from {factorvae_ckpt_path} ===")
-# assume embeddings["WhitenedCSE"] as input to FactorVAE
-sample_input_dim = embeddings["WhitenedCSE"].shape[1]
+sample_input_dim = embeddings["BERT-base"].shape[1]
 factorvae_encoder = MLPEncoder(input_dim=sample_input_dim, z_dim=z_dim).to(device)
 ckpt = torch.load(factorvae_ckpt_path, map_location=device)
 factorvae_encoder.load_state_dict(ckpt["encoder"])
@@ -102,10 +101,10 @@ factorvae_encoder.eval()
 # Encode embeddings to FactorVAE latent space
 factorvae_embeddings = {}
 with torch.no_grad():
-    x_tensor = torch.tensor(embeddings["WhitenedCSE"], dtype=torch.float32).to(device)
+    x_tensor = torch.tensor(embeddings["BERT-base"], dtype=torch.float32).to(device)
     mu, logvar = factorvae_encoder(x_tensor)
     z_latent = mu.cpu().numpy()  # use mean as representation
-    factorvae_embeddings["WhitenedCSE+FactorVAE"] = z_latent
+    factorvae_embeddings["BERT-base+FactorVAE"] = z_latent
     print(f"-> FactorVAE latent shape: {z_latent.shape}\n")
 
 embeddings.update(factorvae_embeddings)
