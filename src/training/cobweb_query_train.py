@@ -18,19 +18,17 @@ from src.whitening.pca_ica import PCAICAWhiteningModel
 from tqdm import tqdm
 from random import sample as randsample
 import uuid
-import pickle
 
 ############ VARIABLES ############
 UNIQUE_ID = uuid.uuid4().hex
 SAVE_DIR = f"./models/cobweb_query_runs/{UNIQUE_ID}"
 os.makedirs(SAVE_DIR, exist_ok=True)
 
-CORPUS_SIZE = 7500
-TARGET_SIZE = 700
+CORPUS_SIZE = 20000
+TARGET_SIZE = 2000
 DATASET_NAME = "msmarco"
 SPLIT = "validation"
 MODEL_NAME = "all-roberta-large-v1"
-TOP_K = 10
 ###################################
 
 print(f"[INFO] Run ID: {UNIQUE_ID}")
