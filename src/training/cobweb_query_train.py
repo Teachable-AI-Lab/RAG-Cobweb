@@ -25,7 +25,7 @@ SAVE_DIR = f"./models/cobweb_query_runs/{UNIQUE_ID}"
 os.makedirs(SAVE_DIR, exist_ok=True)
 
 CORPUS_SIZE = 20000
-TARGET_SIZE = 2000
+TARGET_SIZE = 1000
 DATASET_NAME = "msmarco"
 SPLIT = "validation"
 MODEL_NAME = "all-roberta-large-v1"
@@ -117,6 +117,8 @@ class FixedDocsRankingLoss(nn.Module):
             q = query_emb[b]
             leaf_scores = self.cobweb.cobweb_rank_scores(q, is_embedding=True)
             logits = leaf_scores.unsqueeze(0) / self.temperature
+            logits = logits - logits.max() # normalization
+
             target = labels[b].unsqueeze(0)
             batch_loss.append(self.ce(logits, target))
 
@@ -139,7 +141,7 @@ for i, (q, t) in enumerate(zip(queries, targets)):
 train_dataloader = DataLoader(
     train_examples,
     shuffle=True,
-    batch_size=16,
+    batch_size=12,
     collate_fn=collate_inputexample
 )
 
@@ -166,6 +168,10 @@ def train(query_encoder, loss_fn, train_dataloader, num_epochs=3, lr=2e-5, devic
             optimizer.zero_grad()
             loss = loss_fn(features, labels)
             loss.backward()
+
+            # added gradient clipping
+            torch.nn.utils.clip_grad_norm_(query_encoder.parameters(), max_norm=1.0)
+
             optimizer.step()
 
             total_loss += loss.item()
